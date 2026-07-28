@@ -16,7 +16,7 @@ public class HealthController {
         return ResponseEntity.ok(
             Map.of(
                 "status", "ok",
-                "application", "admitionum"
+                "application", "Admitionum"
             )
         );
     }
