@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="Formulario de confirmación de asistencia"
+    >
+
+    <title>Confirmación de asistencia</title>
+
+    <link
+        rel="stylesheet"
+        href="/css/styles.css"
+    >
+</head>
+
+<body>
+
+    <main class="page-container">
+
+        <section
+            class="form-container"
+            aria-labelledby="page-title"
+        >
+
+            <header class="form-header">
+
+                <p class="event-name">
+                    Admitionum
+                </p>
+
+                <h1 id="page-title">
+                    Confirmación de asistencia
+                </h1>
+
+                <p
+                    id="invitation-name"
+                    class="invitation-name"
+                    aria-live="polite"
+                ></p>
+
+            </header>
+
+            <section
+                class="instructions"
+                aria-labelledby="instructions-title"
+            >
+
+                <h2 id="instructions-title">
+                    Instrucciones
+                </h2>
+
+                <p>
+                    Completa los siguientes datos para
+                    confirmar tu asistencia.
+                    En el campo de contacto puedes indicar
+                    un número de teléfono o una dirección
+                    de correo electrónico.
+                    Incluye cualquier intolerancia
+                    alimentaria que debamos conocer.
+                </p>
+
+            </section>
+
+            <form id="rsvp-form">
+
+                <div class="form-field">
+
+                    <label for="guest-name">
+                        Nombre del invitado
+                        <span aria-hidden="true">*</span>
+                    </label>
+
+                    <input
+                        id="guest-name"
+                        name="guestName"
+                        type="text"
+                        minlength="2"
+                        maxlength="200"
+                        required
+                    >
+
+                </div>
+
+                <div class="form-field">
+
+                    <label for="contact">
+                        Contacto
+                        <span aria-hidden="true">*</span>
+                    </label>
+
+                    <input
+                        id="contact"
+                        name="contact"
+                        type="text"
+                        minlength="3"
+                        maxlength="200"
+                        aria-describedby="contact-help"
+                        required
+                    >
+
+                    <small id="contact-help">
+                        Puedes indicar un teléfono o
+                        un correo electrónico.
+                    </small>
+
+                </div>
+
+                <fieldset class="form-field">
+
+                    <legend>
+                        Confirmación de asistencia
+                        <span aria-hidden="true">*</span>
+                    </legend>
+
+                    <div class="radio-option">
+
+                        <input
+                            id="attendance-yes"
+                            type="radio"
+                            name="attendanceConfirmed"
+                            value="true"
+                            required
+                        >
+
+                        <label for="attendance-yes">
+                            Sí, asistiré
+                        </label>
+
+                    </div>
+
+                    <div class="radio-option">
+
+                        <input
+                            id="attendance-no"
+                            type="radio"
+                            name="attendanceConfirmed"
+                            value="false"
+                            required
+                        >
+
+                        <label for="attendance-no">
+                            No podré asistir
+                        </label>
+
+                    </div>
+
+                </fieldset>
+
+                <div class="form-field">
+
+                    <label for="attendee-count">
+                        Número de asistentes
+                        <span aria-hidden="true">*</span>
+                    </label>
+
+                    <select
+                        id="attendee-count"
+                        name="attendeeCount"
+                        required
+                    >
+                        <option value="">
+                            Selecciona el número de asistentes
+                        </option>
+                    </select>
+
+                    <small>
+                        El número máximo depende de tu
+                        invitación.
+                    </small>
+
+                </div>
+
+                <div class="form-field">
+
+                    <label for="intolerances">
+                        Intolerancias
+                    </label>
+
+                    <textarea
+                        id="intolerances"
+                        name="intolerances"
+                        maxlength="500"
+                        rows="4"
+                        placeholder="Indica aquí cualquier intolerancia alimentaria"
+                    ></textarea>
+
+                </div>
+
+                <div class="form-field">
+
+                    <label for="additional-comment">
+                        Comentario adicional
+                    </label>
+
+                    <textarea
+                        id="additional-comment"
+                        name="additionalComment"
+                        maxlength="1000"
+                        rows="5"
+                        placeholder="Añade cualquier información que quieras comunicarnos"
+                    ></textarea>
+
+                </div>
+
+                <p class="required-help">
+                    Los campos marcados con * son obligatorios.
+                </p>
+
+                <button
+                    id="submit-button"
+                    type="submit"
+                >
+                    Enviar respuesta
+                </button>
+
+                <p
+                    id="form-message"
+                    class="form-message"
+                    aria-live="polite"
+                ></p>
+
+            </form>
+
+        </section>
+
+    </main>
+
+</body>
+</html>

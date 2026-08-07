@@ -33,6 +33,10 @@ import nc.admitionum.exception.InvitationExpiredException;
 import nc.admitionum.exception.InvitationNotFoundException;
 import nc.admitionum.service.InvitationService;
 
+import static org.mockito.Mockito.verifyNoInteractions;
+
+import nc.admitionum.exception.InvalidAttendeeCountException;
+
 @WebMvcTest(PublicInvitationController.class)
 @Import(GlobalExceptionHandler.class)
 class PublicInvitationControllerTest {
@@ -376,5 +380,112 @@ class PublicInvitationControllerTest {
                         "INVITATION_EXPIRED"
                     )
             );
+    }
+
+    @Test
+    void shouldReturnValidationErrorsForInvalidRequest()
+        throws Exception {
+
+    String requestBody = """
+        {
+          "guestName": " ",
+          "contact": "",
+          "attendanceConfirmed": true,
+          "attendeeCount": 11,
+          "intolerances": "",
+          "additionalComment": ""
+        }
+        """;
+
+    mockMvc.perform(
+        put(
+            "/api/public/invitations/"
+                + "DEMO-FAMILY-001/response"
+        )
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON)
+            .content(requestBody)
+    )
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.success")
+                .value(false)
+        )
+        .andExpect(
+            jsonPath("$.error.code")
+                .value("VALIDATION_ERROR")
+        )
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Revisa los campos indicados."
+                )
+        )
+        .andExpect(
+            jsonPath("$.error.fields.guestName")
+                .exists()
+        )
+        .andExpect(
+            jsonPath("$.error.fields.contact")
+                .exists()
+        )
+        .andExpect(
+            jsonPath("$.error.fields.attendeeCount")
+                .exists()
+        );
+
+    verifyNoInteractions(invitationService);
+    }
+
+    @Test
+    void shouldReturnBadRequestForInvalidGuestCount()
+        throws Exception {
+
+    given(
+        invitationService.saveResponse(
+            eq("DEMO-FAMILY-001"),
+            any(SaveRsvpRequest.class)
+        )
+    ).willThrow(
+        new InvalidAttendeeCountException(
+            "Debe asistir al menos una persona."
+        )
+    );
+
+    String requestBody = """
+        {
+          "guestName": "Ana García",
+          "contact": "ana@example.com",
+          "attendanceConfirmed": true,
+          "attendeeCount": 0,
+          "intolerances": "",
+          "additionalComment": ""
+        }
+        """;
+
+    mockMvc.perform(
+        put(
+            "/api/public/invitations/"
+                + "DEMO-FAMILY-001/response"
+        )
+            .contentType(MediaType.APPLICATION_JSON)
+            .accept(MediaType.APPLICATION_JSON)
+            .content(requestBody)
+    )
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.success")
+                .value(false)
+        )
+        .andExpect(
+            jsonPath("$.error.code")
+                .value("INVALID_GUEST_COUNT")
+        )
+        .andExpect(
+            jsonPath("$.error.message")
+                .value(
+                    "Debe asistir al menos una persona."
+                )
+        );
     }
 }
