@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import jakarta.validation.Valid;
 import nc.admitionum.dto.publicapi.InvitationPublicResponse;
 import nc.admitionum.dto.publicapi.SaveRsvpRequest;
 import nc.admitionum.dto.publicapi.SaveRsvpResponse;
@@ -41,6 +42,7 @@ public class PublicInvitationController {
     public ResponseEntity<SaveRsvpResponse>
             saveResponse(
                     @PathVariable("code") String code,
+                    @Valid
                     @RequestBody SaveRsvpRequest request) {
 
         SaveRsvpResponse response =

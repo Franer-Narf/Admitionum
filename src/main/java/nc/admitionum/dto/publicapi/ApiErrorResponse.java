@@ -1,5 +1,9 @@
 package nc.admitionum.dto.publicapi;
 
+import java.util.Map;
+
+import com.fasterxml.jackson.annotation.JsonInclude;
+
 public class ApiErrorResponse {
 
     private boolean success;
@@ -13,7 +17,25 @@ public class ApiErrorResponse {
             String message) {
 
         this.success = false;
-        this.error = new ErrorDetails(code, message);
+        this.error =
+            new ErrorDetails(
+                code,
+                message
+            );
+    }
+
+    public ApiErrorResponse(
+            String code,
+            String message,
+            Map<String, String> fields) {
+
+        this.success = false;
+        this.error =
+            new ErrorDetails(
+                code,
+                message,
+                fields
+            );
     }
 
     public boolean isSuccess() {
@@ -37,6 +59,9 @@ public class ApiErrorResponse {
         private String code;
         private String message;
 
+        @JsonInclude(JsonInclude.Include.NON_EMPTY)
+        private Map<String, String> fields;
+
         public ErrorDetails() {
         }
 
@@ -46,6 +71,16 @@ public class ApiErrorResponse {
 
             this.code = code;
             this.message = message;
+        }
+
+        public ErrorDetails(
+                String code,
+                String message,
+                Map<String, String> fields) {
+
+            this.code = code;
+            this.message = message;
+            this.fields = fields;
         }
 
         public String getCode() {
@@ -62,6 +97,16 @@ public class ApiErrorResponse {
 
         public void setMessage(String message) {
             this.message = message;
+        }
+
+        public Map<String, String> getFields() {
+            return fields;
+        }
+
+        public void setFields(
+                Map<String, String> fields) {
+
+            this.fields = fields;
         }
     }
 }
