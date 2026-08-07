@@ -28,6 +28,10 @@ import nc.admitionum.model.RsvpResponse;
 import nc.admitionum.repository.InvitationRepository;
 import nc.admitionum.repository.RsvpResponseRepository;
 
+import static org.mockito.Mockito.verifyNoInteractions;
+
+import nc.admitionum.exception.InvalidAttendeeCountException;
+
 @ExtendWith(MockitoExtension.class)
 class InvitationServiceTest {
 
@@ -460,5 +464,281 @@ class InvitationServiceTest {
             "Intolerancia a la lactosa",
             "Llegaremos el viernes"
         );
+    }
+
+    @Test
+    void shouldRejectZeroAttendeesWhenAttendanceConfirmed() {
+    Invitation invitation =
+        createValidInvitation();
+
+    SaveRsvpRequest request =
+        new SaveRsvpRequest(
+            "Ana García",
+            "ana@example.com",
+            true,
+            0,
+            null,
+            null
+        );
+
+    given(
+        invitationRepository.findByAccessCode(
+            "DEMO-FAMILY-001"
+        )
+    ).willReturn(
+        Optional.of(invitation)
+    );
+
+    assertThatThrownBy(
+        () -> invitationService.saveResponse(
+            "DEMO-FAMILY-001",
+            request
+        )
+    )
+        .isInstanceOf(
+            InvalidAttendeeCountException.class
+        )
+        .hasMessage(
+            "Debe asistir al menos una persona."
+        );
+
+    verifyNoInteractions(rsvpResponseRepository);
+    }
+
+    @Test
+    void shouldRejectAttendeeCountAboveInvitationMaximum() {
+    Invitation invitation =
+        createValidInvitation();
+
+    SaveRsvpRequest request =
+        new SaveRsvpRequest(
+            "Ana García",
+            "ana@example.com",
+            true,
+            5,
+            null,
+            null
+        );
+
+    given(
+        invitationRepository.findByAccessCode(
+            "DEMO-FAMILY-001"
+        )
+    ).willReturn(
+        Optional.of(invitation)
+    );
+
+    assertThatThrownBy(
+        () -> invitationService.saveResponse(
+            "DEMO-FAMILY-001",
+            request
+        )
+    )
+        .isInstanceOf(
+            InvalidAttendeeCountException.class
+        )
+        .hasMessage(
+            "El número de asistentes supera "
+                + "el máximo permitido."
+        );
+
+    verifyNoInteractions(rsvpResponseRepository);
+    }
+
+    @Test
+    void shouldRejectNonZeroCountWhenAttendanceIsDeclined() {
+    Invitation invitation =
+        createValidInvitation();
+
+    SaveRsvpRequest request =
+        new SaveRsvpRequest(
+            "Ana García",
+            "600 123 123",
+            false,
+            2,
+            null,
+            null
+        );
+
+    given(
+        invitationRepository.findByAccessCode(
+            "DEMO-FAMILY-001"
+        )
+    ).willReturn(
+        Optional.of(invitation)
+    );
+
+    assertThatThrownBy(
+        () -> invitationService.saveResponse(
+            "DEMO-FAMILY-001",
+            request
+        )
+    )
+        .isInstanceOf(
+            InvalidAttendeeCountException.class
+        );
+
+    verifyNoInteractions(rsvpResponseRepository);
+    }
+
+    @Test
+    void shouldAcceptDeclinedAttendanceWithZeroAttendees() {
+    Invitation invitation =
+        createValidInvitation();
+
+    SaveRsvpRequest request =
+        new SaveRsvpRequest(
+            "Ana García",
+            "600 123 123",
+            false,
+            0,
+            null,
+            "No podremos asistir"
+        );
+
+    given(
+        invitationRepository.findByAccessCode(
+            "DEMO-FAMILY-001"
+        )
+    ).willReturn(
+        Optional.of(invitation)
+    );
+
+    given(
+        rsvpResponseRepository.findByInvitationId(1)
+    ).willReturn(
+        Optional.empty()
+    );
+
+    given(
+        rsvpResponseRepository.saveAndFlush(
+            any(RsvpResponse.class)
+        )
+    ).willAnswer(
+        invocation -> {
+            RsvpResponse saved =
+                invocation.getArgument(0);
+
+            saved.setId(20);
+            saved.setUpdatedAt(
+                LocalDateTime.of(
+                    2027,
+                    3,
+                    15,
+                    18,
+                    0
+                )
+            );
+
+            return saved;
+        }
+    );
+
+    invitationService.saveResponse(
+        "DEMO-FAMILY-001",
+        request
+    );
+
+    ArgumentCaptor<RsvpResponse> captor =
+        ArgumentCaptor.forClass(
+            RsvpResponse.class
+        );
+
+    verify(rsvpResponseRepository)
+        .saveAndFlush(captor.capture());
+
+    assertThat(
+        captor
+            .getValue()
+            .getAttendanceConfirmed()
+    ).isFalse();
+
+    assertThat(
+        captor
+            .getValue()
+            .getAttendeeCount()
+    ).isZero();
+    }
+
+    @Test
+    void shouldNormalizeTextBeforeSaving() {
+    Invitation invitation =
+        createValidInvitation();
+
+    SaveRsvpRequest request =
+        new SaveRsvpRequest(
+            "  Ana García  ",
+            "  ana@example.com  ",
+            true,
+            2,
+            "  Sin gluten  ",
+            "   "
+        );
+
+    given(
+        invitationRepository.findByAccessCode(
+            "DEMO-FAMILY-001"
+        )
+    ).willReturn(
+        Optional.of(invitation)
+    );
+
+    given(
+        rsvpResponseRepository.findByInvitationId(1)
+    ).willReturn(
+        Optional.empty()
+    );
+
+    given(
+        rsvpResponseRepository.saveAndFlush(
+            any(RsvpResponse.class)
+        )
+    ).willAnswer(
+        invocation -> {
+            RsvpResponse saved =
+                invocation.getArgument(0);
+
+            saved.setId(20);
+            saved.setUpdatedAt(
+                LocalDateTime.of(
+                    2027,
+                    3,
+                    15,
+                    18,
+                    0
+                )
+            );
+
+            return saved;
+        }
+    );
+
+    invitationService.saveResponse(
+        "DEMO-FAMILY-001",
+        request
+    );
+
+    ArgumentCaptor<RsvpResponse> captor =
+        ArgumentCaptor.forClass(
+            RsvpResponse.class
+        );
+
+    verify(rsvpResponseRepository)
+        .saveAndFlush(captor.capture());
+
+    RsvpResponse stored =
+        captor.getValue();
+
+    assertThat(stored.getGuestName())
+        .isEqualTo("Ana García");
+
+    assertThat(stored.getContact())
+        .isEqualTo("ana@example.com");
+
+    assertThat(stored.getIntolerances())
+        .isEqualTo("Sin gluten");
+
+    assertThat(stored.getAdditionalComment())
+        .isNull();
     }
 }
