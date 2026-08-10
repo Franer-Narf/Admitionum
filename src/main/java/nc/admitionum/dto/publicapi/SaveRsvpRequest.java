@@ -48,9 +48,9 @@ public class SaveRsvpRequest {
             "El número de asistentes no puede ser negativo."
     )
     @Max(
-        value = 10,
+        value = 20,
         message =
-            "El número de asistentes no puede superar 10."
+            "El número de asistentes no puede superar 20."
     )
     private Integer attendeeCount;
 

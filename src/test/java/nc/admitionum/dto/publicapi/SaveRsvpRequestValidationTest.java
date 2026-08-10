@@ -150,22 +150,37 @@ class SaveRsvpRequestValidationTest {
     }
 
     @Test
-    void shouldRejectAttendeeCountAboveTen() {
+    void shouldRejectAttendeeCountAboveTwenty() {
         SaveRsvpRequest request =
             createValidRequest();
 
-        request.setAttendeeCount(11);
+        request.setAttendeeCount(21);
+
+        Set<ConstraintViolation<SaveRsvpRequest>>
+            violations =
+                validator.validate(request);
+
+        assertThat(
+         hasViolationFor(
+               violations,
+               "attendeeCount"
+         )
+        ).isTrue();
+    }
+
+    @Test
+    void shouldAcceptAttendeeCountAtTwenty() {
+        SaveRsvpRequest request =
+            createValidRequest();
+
+        request.setAttendeeCount(20);
 
         Set<ConstraintViolation<SaveRsvpRequest>>
                 violations =
                     validator.validate(request);
 
-        assertThat(
-            hasViolationFor(
-                violations,
-                "attendeeCount"
-            )
-        ).isTrue();
+        assertThat(violations)
+            .isEmpty();
     }
 
     @Test
