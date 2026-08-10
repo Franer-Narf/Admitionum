@@ -167,17 +167,18 @@
                         <span aria-hidden="true">*</span>
                     </label>
 
-                    <select
+                    <input
                         id="attendee-count"
                         name="attendeeCount"
+                        type="number"
+                        min="1"
+                        step="1"
+                        inputmode="numeric"
+                        aria-describedby="attendee-count-help"
                         required
                     >
-                        <option value="">
-                            Selecciona el número de asistentes
-                        </option>
-                    </select>
 
-                    <small>
+                    <small id="attendee-count-help">
                         El número máximo depende de tu
                         invitación.
                     </small>

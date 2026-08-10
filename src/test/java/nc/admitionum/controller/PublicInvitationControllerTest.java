@@ -391,7 +391,7 @@ class PublicInvitationControllerTest {
           "guestName": " ",
           "contact": "",
           "attendanceConfirmed": true,
-          "attendeeCount": 11,
+          "attendeeCount": 21,
           "intolerances": "",
           "additionalComment": ""
         }

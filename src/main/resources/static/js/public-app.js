@@ -16,8 +16,13 @@ const attendanceRadios =
         'input[name="attendanceConfirmed"]'
     );
 
-const attendeeCountSelect =
+const attendeeCountInput =
     document.querySelector("#attendee-count");
+
+const attendeeCountHelp =
+    document.querySelector(
+        "#attendee-count-help"
+    );
 
 const intolerancesInput =
     document.querySelector("#intolerances");
@@ -74,61 +79,6 @@ function showMessage(message) {
     formMessage.textContent = message;
 }
 
-
-function buildAttendeeOptions(
-        invitationMaxGuests) {
-
-    attendeeCountSelect.replaceChildren();
-
-    const placeholderOption =
-        document.createElement("option");
-
-    placeholderOption.value = "";
-
-    placeholderOption.textContent =
-        "Selecciona el número de asistentes";
-
-    attendeeCountSelect.appendChild(
-        placeholderOption
-    );
-
-
-    const zeroOption =
-        document.createElement("option");
-
-    zeroOption.value = "0";
-    zeroOption.textContent = "0";
-    zeroOption.disabled = true;
-
-    attendeeCountSelect.appendChild(
-        zeroOption
-    );
-
-
-    for (
-        let count = 1;
-        count <= invitationMaxGuests;
-        count += 1
-    ) {
-
-        const option =
-            document.createElement("option");
-
-        option.value =
-            String(count);
-
-        option.textContent =
-            String(count);
-
-        attendeeCountSelect.appendChild(
-            option
-        );
-    }
-
-    attendeeCountSelect.value = "";
-}
-
-
 function fillExistingResponse(
         existingResponse) {
 
@@ -158,7 +108,7 @@ function fillExistingResponse(
             .querySelector("#attendance-yes")
             .checked = true;
 
-        attendeeCountSelect.value =
+        attendeeCountInput.value =
             String(
                 existingResponse
                     .attendeeCount ?? 1
@@ -173,7 +123,7 @@ function fillExistingResponse(
             .querySelector("#attendance-no")
             .checked = true;
 
-        attendeeCountSelect.value = "0";
+        attendeeCountInput.value = "0";
     }
 }
 
@@ -187,9 +137,9 @@ function updateAttendeeCountState() {
 
     if (selectedAttendance === null) {
 
-        attendeeCountSelect.value = "";
+        attendeeCountInput.value = "";
 
-        attendeeCountSelect.disabled = true;
+        attendeeCountInput.disabled = true;
 
         return;
     }
@@ -200,23 +150,23 @@ function updateAttendeeCountState() {
 
     if (isAttending) {
 
-        attendeeCountSelect.disabled = false;
+        attendeeCountInput.disabled = false;
 
         if (
-            attendeeCountSelect.value === ""
-            || attendeeCountSelect.value === "0"
+            attendeeCountInput.value === ""
+            || attendeeCountInput.value === "0"
         ) {
 
-            attendeeCountSelect.value = "1";
+            attendeeCountInput.value = "1";
         }
 
         return;
     }
 
 
-    attendeeCountSelect.value = "0";
+    attendeeCountInput.value = "0";
 
-    attendeeCountSelect.disabled = true;
+    attendeeCountInput.disabled = true;
 }
 
 
@@ -334,14 +284,15 @@ async function loadInvitation() {
         }
 
 
-        maxGuests =
-            Number(data.maxGuests);
+       maxGuests =
+        Number(data.maxGuests);
 
 
-        if (
-            !Number.isInteger(maxGuests)
-            || maxGuests < 1
-        ) {
+    if (
+        !Number.isInteger(maxGuests)
+        || maxGuests < 1
+        || maxGuests > 20
+    ) {
 
             showMessage(
                 "La invitación contiene "
@@ -358,9 +309,13 @@ async function loadInvitation() {
                 + data.displayName;
 
 
-        buildAttendeeOptions(
-            maxGuests
-        );
+        attendeeCountInput.max =
+        String(maxGuests);
+
+    attendeeCountHelp.textContent =
+        "Puedes confirmar hasta "
+            + maxGuests
+            + " asistentes.";
 
 
         fillExistingResponse(
@@ -437,7 +392,7 @@ function buildRequestBody() {
         attendeeCount:
             attendanceConfirmed
                 ? Number(
-                    attendeeCountSelect.value
+                    attendeeCountInput.value
                 )
                 : 0,
 
