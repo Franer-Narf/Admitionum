@@ -138,11 +138,11 @@ Forma de ayudarme:
 
 Estado actual completado:
 
-Fase 13.1
+Fase 14
 
 Fase que quiero desarrollar:
 
-Fase 14
+Fase 15
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
@@ -31582,6 +31582,2459 @@ El fallo solo afecta a la prueba, el comportamiento del proyecto es adecuado en 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
 Fase 14
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+# Fase 14 — Crear exportación CSV v1.1
+
+He revisado el registro de trazabilidad adjunto y el estado actual de `main` en GitHub. La referencia continúa siendo **Admitionum v1.1, Java 25, Spring Boot 4.1.0, Maven y paquete raíz `nc.admitionum`**. El orden obligatorio coloca la exportación CSV inmediatamente después del panel administrativo. 
+
+Además, `main` contiene ya la Fase 13.1 integrada: el último merge corresponde a `Phase13.1`, existe `AdminPageController`, `/admin/` sirve el panel, el HTML administrativo está creado y `admin-app.js` consume los dos endpoints administrativos.
+
+Por tanto, **la Fase 14 es la siguiente fase correcta**.
+
+---
+
+# 1. Estado actual del proyecto
+
+El orden queda así:
+
+```text
+Fase 1    — Spring Boot: completada.
+Fase 2    — API de prueba: completada.
+Fase 2.1  — Corrección de pruebas: completada.
+Fase 3    — Invitation: completada.
+Fase 4    — Consulta pública: completada.
+Fase 4.1  — Corrección de nombres físicos: completada.
+Fase 5    — RsvpResponse: completada.
+Fase 6    — SaveRsvpRequest: completada.
+Fase 7    — Guardar/actualizar respuesta: completada.
+Fase 8    — Validaciones: completada.
+Fase 9    — HTML/CSS público: completada.
+Fase 10   — JavaScript público: completada.
+Fase 10.1 — Límite de asistentes: completada.
+Fase 11   — Spring Security: completada.
+Fase 11.1 — Corrección de seguridad: completada.
+Fase 12   — API administrativa: completada.
+Fase 13   — Panel administrativo: completada.
+Fase 13.1 — Corrección del panel/tests: completada.
+Fase 14   — Exportación CSV: fase actual.
+```
+
+Actualmente `AdminController` expone únicamente:
+
+```http
+GET /api/admin/dashboard
+GET /api/admin/responses
+```
+
+y todavía no existe un endpoint CSV.
+
+El panel ya contiene búsqueda, filtros, tabla, métricas y cierre de sesión, pero no existe aún el botón de exportación.
+
+---
+
+# 2. Alcance exacto de la Fase 14
+
+En esta fase vamos a añadir exclusivamente:
+
+```http
+GET /api/admin/responses.csv
+```
+
+El endpoint:
+
+1. Estará protegido por Spring Security.
+2. Generará un CSV con todas las invitaciones.
+3. Incluirá también las invitaciones pendientes.
+4. Incluirá los datos de respuesta cuando existan.
+5. Incluirá `SubmittedAt`.
+6. Incluirá `UpdatedAt`.
+7. Descargará el archivo como:
+
+```text
+wedding-responses.csv
+```
+
+8. Neutralizará posibles fórmulas introducidas por un usuario.
+9. Escapará correctamente comas, comillas y saltos de línea.
+10. Añadirá un enlace **Exportar CSV** al panel administrativo.
+
+El resultado será:
+
+```text
+/admin/
+   │
+   ├── GET /api/admin/dashboard
+   ├── GET /api/admin/responses
+   │
+   └── GET /api/admin/responses.csv
+                       │
+                       ▼
+              wedding-responses.csv
+```
+
+---
+
+# 3. Qué no desarrollaremos todavía
+
+No corresponde a esta fase:
+
+```text
+Azure SQL.
+schema.sql de producción.
+Microsoft SQL Server Driver.
+Docker.
+Dockerfile.
+Azure Container Apps.
+GitHub Actions.
+Dominio personalizado.
+Infraestructura Azure.
+Cambios en autenticación.
+Edición administrativa.
+Creación de invitaciones desde el panel.
+Exportación Excel XLSX.
+PDF.
+Envío del CSV por correo.
+Exportación solamente de los filtros visibles.
+```
+
+Especialmente importante:
+
+> **El CSV exportará el conjunto administrativo completo, no únicamente las filas filtradas visualmente en JavaScript.**
+
+Los filtros actuales seguirán siendo exclusivamente visuales en el navegador.
+
+---
+
+# 4. Contradicciones o aclaraciones detectadas
+
+## 4.1. `submittedAt` no está en `AdminRsvpResponse`
+
+Durante la Fase 12 se decidió conservar `AdminRsvpResponse` sin añadir:
+
+```java
+submittedAt
+```
+
+Actualmente contiene `updatedAt`, pero no la fecha inicial. El Documento Maestro, sin embargo, exige que el CSV contenga:
+
+```text
+FechaEnvio
+UltimaActualizacion
+```
+
+No modificaremos `AdminRsvpResponse`.
+
+La solución será que `CsvExportService` utilice:
+
+```text
+AdminService
+    → Para obtener la lista administrativa y su estado.
+
+RsvpResponseRepository
+    → Para obtener SubmittedAt.
+```
+
+De esta forma no cambiamos el contrato JSON existente.
+
+La entidad `RsvpResponse` ya contiene tanto `submittedAt` como `updatedAt`.
+
+---
+
+## 4.2. No modificaremos la seguridad
+
+Actualmente `SecurityConfig` protege:
+
+```text
+/admin/**
+/api/admin/**
+```
+
+con:
+
+```java
+.hasRole("ADMIN")
+```
+
+Por tanto:
+
+```text
+/api/admin/responses.csv
+```
+
+queda automáticamente dentro de la regla existente.
+
+No hay que añadir otra regla de seguridad. Spring Security aplica las reglas configuradas mediante los patrones de `requestMatchers`, por lo que el patrón `/api/admin/**` cubre el nuevo endpoint. ([Home][1])
+
+---
+
+## 4.3. Límite de asistentes
+
+Algunas partes antiguas del Documento Maestro todavía muestran:
+
+```text
+máximo 10
+```
+
+pero la Fase 10.1 lo sustituyó por:
+
+```text
+MaxGuests: 1..20
+AttendeeCount: 0..20
+```
+
+La Fase 14 no modifica ninguna de estas reglas.
+
+---
+
+# 5. Formato definitivo del CSV
+
+La cabecera definida en v1.1 será exactamente:
+
+```csv
+Invitacion,NombreInvitado,Contacto,Estado,NumeroAsistentes,Intolerancias,ComentarioAdicional,FechaEnvio,UltimaActualizacion
+```
+
+Una fila confirmada podría quedar:
+
+```csv
+"Familia García","Ana García","ana@example.com","CONFIRMED","3","Lactosa","Llegaremos el viernes","2026-08-01T10:00:00","2026-08-02T11:30:00"
+```
+
+Una invitación pendiente:
+
+```csv
+"María López","","","PENDING","","","","",""
+```
+
+Los estados serán los mismos de la API:
+
+```text
+CONFIRMED
+DECLINED
+PENDING
+DISABLED
+EXPIRED
+```
+
+No crearemos una segunda nomenclatura distinta únicamente para el CSV.
+
+---
+
+# 6. Seguridad frente a fórmulas
+
+Los siguientes caracteres tienen un tratamiento especial cuando aparecen al principio de un valor:
+
+```text
+=
++
+-
+@
+```
+
+Por ejemplo, un invitado podría escribir como comentario:
+
+```text
+=2+2
+```
+
+El CSV deberá convertirlo en texto:
+
+```text
+'=2+2
+```
+
+También es especialmente relevante para `Contact`, ya que un teléfono puede empezar por:
+
+```text
++34
+```
+
+El archivo exportará:
+
+```text
+'+34 600 123 123
+```
+
+De esta forma se trata como texto.
+
+Además, todo valor se encerrará entre comillas dobles.
+
+Por ejemplo:
+
+```text
+Llegaremos, quizá
+```
+
+se convertirá en:
+
+```csv
+"Llegaremos, quizá"
+```
+
+Y:
+
+```text
+Dijo "sí"
+```
+
+se convertirá en:
+
+```csv
+"Dijo ""sí"""
+```
+
+---
+
+# 7. Archivos afectados
+
+Crearemos:
+
+```text
+src/main/java/nc/admitionum/service/
+└── CsvExportService.java
+
+src/test/java/nc/admitionum/service/
+└── CsvExportServiceTest.java
+```
+
+Modificaremos:
+
+```text
+src/main/java/nc/admitionum/controller/
+└── AdminController.java
+
+src/test/java/nc/admitionum/controller/
+└── AdminControllerTest.java
+
+src/main/resources/static/admin/
+└── index.html
+
+src/main/resources/static/css/
+└── styles.css
+```
+
+No será necesario modificar:
+
+```text
+pom.xml
+SecurityConfig.java
+AdminService.java
+AdminRsvpResponse.java
+AdminDashboardResponse.java
+RsvpResponse.java
+Invitation.java
+admin-app.js
+application.properties
+```
+
+---
+
+# 8. Paso 0 — Preparar la rama
+
+Primero:
+
+```bash
+git status
+```
+
+Debes tener el árbol limpio.
+
+Después:
+
+```bash
+git switch main
+git pull
+git switch -c Phase14
+```
+
+Si ya existe:
+
+```bash
+git switch Phase14
+```
+
+Antes de hacer cambios:
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+## Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Debe terminar con:
+
+```text
+BUILD SUCCESS
+```
+
+No avances si la batería ya falla antes de comenzar la Fase 14.
+
+---
+
+# 9. Paso 1 — Crear `CsvExportService`
+
+Ruta:
+
+```text
+src/main/java/nc/admitionum/service/CsvExportService.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.service;
+
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import nc.admitionum.dto.admin.AdminRsvpResponse;
+import nc.admitionum.model.Invitation;
+import nc.admitionum.model.RsvpResponse;
+import nc.admitionum.repository.RsvpResponseRepository;
+
+@Service
+@Transactional(readOnly = true)
+public class CsvExportService {
+
+    private static final String HEADER =
+        "Invitacion,"
+            + "NombreInvitado,"
+            + "Contacto,"
+            + "Estado,"
+            + "NumeroAsistentes,"
+            + "Intolerancias,"
+            + "ComentarioAdicional,"
+            + "FechaEnvio,"
+            + "UltimaActualizacion";
+
+    private static final String LINE_SEPARATOR =
+        "\r\n";
+
+    private static final DateTimeFormatter
+            DATE_TIME_FORMATTER =
+                DateTimeFormatter.ofPattern(
+                    "uuuu-MM-dd'T'HH:mm:ss"
+                );
+
+    private final AdminService adminService;
+
+    private final RsvpResponseRepository
+        rsvpResponseRepository;
+
+    public CsvExportService(
+            AdminService adminService,
+            RsvpResponseRepository
+                rsvpResponseRepository) {
+
+        this.adminService = adminService;
+        this.rsvpResponseRepository =
+            rsvpResponseRepository;
+    }
+
+    public String exportResponses() {
+
+        List<AdminRsvpResponse> adminResponses =
+            adminService.getResponses();
+
+        List<RsvpResponse> storedResponses =
+            rsvpResponseRepository.findAll();
+
+        Map<Integer, RsvpResponse>
+                responsesByInvitationId =
+                    createResponseMap(
+                        storedResponses
+                    );
+
+        StringBuilder csv =
+            new StringBuilder();
+
+        csv.append(HEADER)
+            .append(LINE_SEPARATOR);
+
+        for (AdminRsvpResponse adminResponse
+                : adminResponses) {
+
+            RsvpResponse storedResponse =
+                responsesByInvitationId.get(
+                    adminResponse.getInvitationId()
+                );
+
+            appendRow(
+                csv,
+                adminResponse,
+                storedResponse
+            );
+        }
+
+        return csv.toString();
+    }
+
+    private Map<Integer, RsvpResponse>
+            createResponseMap(
+                    List<RsvpResponse> responses) {
+
+        Map<Integer, RsvpResponse> result =
+            new HashMap<>();
+
+        for (RsvpResponse response : responses) {
+
+            Invitation invitation =
+                response.getInvitation();
+
+            if (invitation != null
+                    && invitation.getId() != null) {
+
+                result.put(
+                    invitation.getId(),
+                    response
+                );
+            }
+        }
+
+        return result;
+    }
+
+    private void appendRow(
+            StringBuilder csv,
+            AdminRsvpResponse adminResponse,
+            RsvpResponse storedResponse) {
+
+        appendCsvValue(
+            csv,
+            adminResponse.getDisplayName()
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            adminResponse.getGuestName()
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            adminResponse.getContact()
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            adminResponse.getStatus()
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            adminResponse.getAttendeeCount()
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            adminResponse.getIntolerances()
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            adminResponse.getAdditionalComment()
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            storedResponse == null
+                ? null
+                : formatDateTime(
+                    storedResponse.getSubmittedAt()
+                )
+        );
+
+        csv.append(',');
+
+        appendCsvValue(
+            csv,
+            formatDateTime(
+                adminResponse.getUpdatedAt()
+            )
+        );
+
+        csv.append(LINE_SEPARATOR);
+    }
+
+    private void appendCsvValue(
+            StringBuilder csv,
+            Object value) {
+
+        String text =
+            value == null
+                ? ""
+                : String.valueOf(value);
+
+        String safeText =
+            neutralizeFormula(text);
+
+        String escapedText =
+            safeText.replace(
+                "\"",
+                "\"\""
+            );
+
+        csv.append('"')
+            .append(escapedText)
+            .append('"');
+    }
+
+    private String neutralizeFormula(
+            String value) {
+
+        if (value.isEmpty()) {
+            return value;
+        }
+
+        String valueWithoutLeadingSpaces =
+            value.stripLeading();
+
+        if (valueWithoutLeadingSpaces.isEmpty()) {
+            return value;
+        }
+
+        char firstCharacter =
+            valueWithoutLeadingSpaces.charAt(0);
+
+        if (firstCharacter == '='
+                || firstCharacter == '+'
+                || firstCharacter == '-'
+                || firstCharacter == '@') {
+
+            return "'" + value;
+        }
+
+        return value;
+    }
+
+    private String formatDateTime(
+            LocalDateTime value) {
+
+        if (value == null) {
+            return "";
+        }
+
+        return DATE_TIME_FORMATTER
+            .format(value);
+    }
+}
+```
+
+---
+
+# 10. Qué hace `CsvExportService`
+
+## `@Service`
+
+```java
+@Service
+```
+
+Declara una clase de lógica de aplicación gestionada por Spring.
+
+---
+
+## `@Transactional(readOnly = true)`
+
+```java
+@Transactional(readOnly = true)
+```
+
+La exportación solamente consulta información.
+
+No modifica:
+
+```text
+Invitations
+RsvpResponses
+```
+
+---
+
+## `AdminService`
+
+```java
+private final AdminService adminService;
+```
+
+Reutilizamos:
+
+```java
+adminService.getResponses()
+```
+
+Esto es importante porque `AdminService` ya conoce:
+
+```text
+CONFIRMED
+DECLINED
+PENDING
+DISABLED
+EXPIRED
+```
+
+y el panel ya depende de esas reglas.
+
+No crearemos una segunda lógica distinta para calcular los estados.
+
+---
+
+## `RsvpResponseRepository`
+
+Lo necesitamos solamente porque:
+
+```text
+AdminRsvpResponse
+```
+
+no contiene:
+
+```text
+submittedAt
+```
+
+La entidad sí lo contiene.
+
+---
+
+## Cabecera
+
+```java
+private static final String HEADER = ...
+```
+
+No cambia entre exportaciones, por eso es una constante.
+
+---
+
+## `\r\n`
+
+```java
+"\r\n"
+```
+
+Se utiliza como separación de líneas del CSV.
+
+---
+
+## `appendCsvValue`
+
+Este método centraliza:
+
+```text
+null → cadena vacía
+neutralización de fórmulas
+escape de comillas
+encapsulado entre comillas
+```
+
+Así no repetimos esta lógica nueve veces.
+
+---
+
+# 11. Paso 2 — Crear `CsvExportServiceTest`
+
+Ruta:
+
+```text
+src/test/java/nc/admitionum/service/CsvExportServiceTest.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.BDDMockito.given;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import nc.admitionum.dto.admin.AdminRsvpResponse;
+import nc.admitionum.model.Invitation;
+import nc.admitionum.model.RsvpResponse;
+import nc.admitionum.repository.RsvpResponseRepository;
+
+@ExtendWith(MockitoExtension.class)
+class CsvExportServiceTest {
+
+    @Mock
+    private AdminService adminService;
+
+    @Mock
+    private RsvpResponseRepository
+        rsvpResponseRepository;
+
+    @InjectMocks
+    private CsvExportService csvExportService;
+
+    @Test
+    void shouldExportResponsesWithExpectedColumns() {
+
+        LocalDateTime submittedAt =
+            LocalDateTime.of(
+                2026,
+                8,
+                1,
+                10,
+                0
+            );
+
+        LocalDateTime updatedAt =
+            LocalDateTime.of(
+                2026,
+                8,
+                2,
+                11,
+                30
+            );
+
+        AdminRsvpResponse confirmed =
+            new AdminRsvpResponse(
+                1,
+                "Familia García",
+                4,
+                "CONFIRMED",
+                "Ana García",
+                "ana@example.com",
+                3,
+                "Lactosa",
+                "Llegaremos el viernes",
+                updatedAt
+            );
+
+        AdminRsvpResponse pending =
+            new AdminRsvpResponse(
+                2,
+                "María López",
+                1,
+                "PENDING",
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            );
+
+        Invitation invitation =
+            new Invitation(
+                "DEMO-FAMILY-001",
+                "Familia García",
+                4,
+                true,
+                null
+            );
+
+        invitation.setId(1);
+
+        RsvpResponse storedResponse =
+            new RsvpResponse(
+                invitation,
+                "Ana García",
+                "ana@example.com",
+                true,
+                3,
+                "Lactosa",
+                "Llegaremos el viernes"
+            );
+
+        storedResponse.setSubmittedAt(
+            submittedAt
+        );
+
+        storedResponse.setUpdatedAt(
+            updatedAt
+        );
+
+        given(
+            adminService.getResponses()
+        ).willReturn(
+            List.of(
+                confirmed,
+                pending
+            )
+        );
+
+        given(
+            rsvpResponseRepository.findAll()
+        ).willReturn(
+            List.of(storedResponse)
+        );
+
+        String csv =
+            csvExportService.exportResponses();
+
+        String expected =
+            "Invitacion,"
+                + "NombreInvitado,"
+                + "Contacto,"
+                + "Estado,"
+                + "NumeroAsistentes,"
+                + "Intolerancias,"
+                + "ComentarioAdicional,"
+                + "FechaEnvio,"
+                + "UltimaActualizacion"
+                + "\r\n"
+
+                + "\"Familia García\","
+                + "\"Ana García\","
+                + "\"ana@example.com\","
+                + "\"CONFIRMED\","
+                + "\"3\","
+                + "\"Lactosa\","
+                + "\"Llegaremos el viernes\","
+                + "\"2026-08-01T10:00:00\","
+                + "\"2026-08-02T11:30:00\""
+                + "\r\n"
+
+                + "\"María López\","
+                + "\"\","
+                + "\"\","
+                + "\"PENDING\","
+                + "\"\","
+                + "\"\","
+                + "\"\","
+                + "\"\","
+                + "\"\""
+                + "\r\n";
+
+        assertThat(csv)
+            .isEqualTo(expected);
+    }
+
+    @Test
+    void shouldNeutralizeFormulaLikeValues() {
+
+        LocalDateTime date =
+            LocalDateTime.of(
+                2026,
+                8,
+                2,
+                11,
+                30
+            );
+
+        AdminRsvpResponse response =
+            new AdminRsvpResponse(
+                1,
+                "Familia Demo",
+                2,
+                "CONFIRMED",
+                "=2+2",
+                "+34 600 123 123",
+                1,
+                "-Sin gluten",
+                "@SUM(A1:A2)",
+                date
+            );
+
+        Invitation invitation =
+            new Invitation(
+                "DEMO-001",
+                "Familia Demo",
+                2,
+                true,
+                null
+            );
+
+        invitation.setId(1);
+
+        RsvpResponse storedResponse =
+            new RsvpResponse(
+                invitation,
+                "=2+2",
+                "+34 600 123 123",
+                true,
+                1,
+                "-Sin gluten",
+                "@SUM(A1:A2)"
+            );
+
+        storedResponse.setSubmittedAt(date);
+        storedResponse.setUpdatedAt(date);
+
+        given(
+            adminService.getResponses()
+        ).willReturn(
+            List.of(response)
+        );
+
+        given(
+            rsvpResponseRepository.findAll()
+        ).willReturn(
+            List.of(storedResponse)
+        );
+
+        String csv =
+            csvExportService.exportResponses();
+
+        assertThat(csv)
+            .contains("\"'=2+2\"");
+
+        assertThat(csv)
+            .contains(
+                "\"'+34 600 123 123\""
+            );
+
+        assertThat(csv)
+            .contains("\"'-Sin gluten\"");
+
+        assertThat(csv)
+            .contains(
+                "\"'@SUM(A1:A2)\""
+            );
+    }
+
+    @Test
+    void shouldEscapeQuotesCommasAndLineBreaks() {
+
+        LocalDateTime date =
+            LocalDateTime.of(
+                2026,
+                8,
+                2,
+                11,
+                30
+            );
+
+        String comment =
+            "Llegaremos, \"quizá\"\n"
+                + "el viernes";
+
+        AdminRsvpResponse response =
+            new AdminRsvpResponse(
+                1,
+                "Familia Demo",
+                2,
+                "CONFIRMED",
+                "Ana",
+                "ana@example.com",
+                1,
+                "",
+                comment,
+                date
+            );
+
+        Invitation invitation =
+            new Invitation(
+                "DEMO-001",
+                "Familia Demo",
+                2,
+                true,
+                null
+            );
+
+        invitation.setId(1);
+
+        RsvpResponse storedResponse =
+            new RsvpResponse(
+                invitation,
+                "Ana",
+                "ana@example.com",
+                true,
+                1,
+                "",
+                comment
+            );
+
+        storedResponse.setSubmittedAt(date);
+        storedResponse.setUpdatedAt(date);
+
+        given(
+            adminService.getResponses()
+        ).willReturn(
+            List.of(response)
+        );
+
+        given(
+            rsvpResponseRepository.findAll()
+        ).willReturn(
+            List.of(storedResponse)
+        );
+
+        String csv =
+            csvExportService.exportResponses();
+
+        assertThat(csv)
+            .contains(
+                "\"Llegaremos, \"\"quizá\"\"\n"
+                    + "el viernes\""
+            );
+    }
+}
+```
+
+---
+
+# 12. Ejecutar la prueba del servicio
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=CsvExportServiceTest" test
+```
+
+## Git Bash
+
+```bash
+./mvnw -Dtest=CsvExportServiceTest test
+```
+
+Resultado esperado:
+
+```text
+Tests run: 3
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+Si falla, no continúes al controlador hasta resolverlo.
+
+---
+
+# 13. Paso 3 — Modificar `AdminController`
+
+Ruta:
+
+```text
+src/main/java/nc/admitionum/controller/AdminController.java
+```
+
+El archivo actual recibe únicamente `AdminService`.
+
+Sustitúyelo por este contenido completo:
+
+```java
+package nc.admitionum.controller;
+
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import nc.admitionum.dto.admin.AdminDashboardResponse;
+import nc.admitionum.dto.admin.AdminRsvpResponse;
+import nc.admitionum.service.AdminService;
+import nc.admitionum.service.CsvExportService;
+
+@RestController
+@RequestMapping("/api/admin")
+public class AdminController {
+
+    private final AdminService adminService;
+
+    private final CsvExportService csvExportService;
+
+    public AdminController(
+            AdminService adminService,
+            CsvExportService csvExportService) {
+
+        this.adminService = adminService;
+        this.csvExportService =
+            csvExportService;
+    }
+
+    @GetMapping("/dashboard")
+    public ResponseEntity<AdminDashboardResponse>
+            getDashboard() {
+
+        AdminDashboardResponse response =
+            adminService.getDashboard();
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/responses")
+    public ResponseEntity<List<AdminRsvpResponse>>
+            getResponses() {
+
+        List<AdminRsvpResponse> response =
+            adminService.getResponses();
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping(
+        value = "/responses.csv",
+        produces = "text/csv"
+    )
+    public ResponseEntity<byte[]>
+            exportResponsesCsv() {
+
+        String csv =
+            csvExportService.exportResponses();
+
+        byte[] csvBytes =
+            csv.getBytes(
+                StandardCharsets.UTF_8
+            );
+
+        HttpHeaders headers =
+            new HttpHeaders();
+
+        headers.setContentType(
+            MediaType.parseMediaType(
+                "text/csv;charset=UTF-8"
+            )
+        );
+
+        headers.setContentDisposition(
+            ContentDisposition
+                .attachment()
+                .filename(
+                    "wedding-responses.csv",
+                    StandardCharsets.UTF_8
+                )
+                .build()
+        );
+
+        return ResponseEntity
+            .ok()
+            .headers(headers)
+            .body(csvBytes);
+    }
+}
+```
+
+Spring proporciona `ContentDisposition.attachment()` y permite especificar un nombre de archivo para generar correctamente la cabecera de descarga. ([Home][2])
+
+---
+
+# 14. Flujo del nuevo endpoint
+
+Cuando pulses el enlace:
+
+```text
+Exportar CSV
+```
+
+ocurrirá:
+
+```text
+Navegador
+   │
+   │ GET /api/admin/responses.csv
+   ▼
+Spring Security
+   │
+   │ ROLE_ADMIN
+   ▼
+AdminController
+   │
+   ▼
+CsvExportService
+   │
+   ├── AdminService.getResponses()
+   │
+   └── RsvpResponseRepository.findAll()
+   │
+   ▼
+Generación CSV
+   │
+   ▼
+HTTP 200
+Content-Type: text/csv
+Content-Disposition: attachment
+   │
+   ▼
+wedding-responses.csv
+```
+
+---
+
+# 15. Paso 4 — Actualizar `AdminControllerTest`
+
+Ruta:
+
+```text
+src/test/java/nc/admitionum/controller/AdminControllerTest.java
+```
+
+El test actual solo tiene un mock de `AdminService`; como `AdminController` tendrá ahora una segunda dependencia, debemos proporcionar también un mock de `CsvExportService`.
+
+## Añade estos imports estáticos
+
+Junto a los actuales:
+
+```java
+import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+```
+
+Añade también:
+
+```java
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+```
+
+Y:
+
+```java
+import nc.admitionum.service.CsvExportService;
+```
+
+---
+
+## Añade el nuevo mock
+
+Justo después de:
+
+```java
+@MockitoBean
+private AdminService adminService;
+```
+
+añade:
+
+```java
+@MockitoBean
+private CsvExportService csvExportService;
+```
+
+---
+
+# 16. Añadir las tres pruebas CSV
+
+Dentro de `AdminControllerTest`, antes de la última llave `}`, añade:
+
+```java
+@Test
+void csvShouldRequireAuthentication()
+        throws Exception {
+
+    mockMvc.perform(
+        get("/api/admin/responses.csv")
+    )
+        .andExpect(
+            status().is3xxRedirection()
+        )
+        .andExpect(
+            redirectedUrl("/login")
+        );
+}
+
+@Test
+void adminShouldExportCsv()
+        throws Exception {
+
+    String csv =
+        "Invitacion,"
+            + "NombreInvitado,"
+            + "Contacto,"
+            + "Estado,"
+            + "NumeroAsistentes,"
+            + "Intolerancias,"
+            + "ComentarioAdicional,"
+            + "FechaEnvio,"
+            + "UltimaActualizacion"
+            + "\r\n";
+
+    given(
+        csvExportService.exportResponses()
+    ).willReturn(csv);
+
+    mockMvc.perform(
+        get("/api/admin/responses.csv")
+            .with(
+                user("test-admin")
+                    .roles("ADMIN")
+            )
+    )
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .contentTypeCompatibleWith(
+                    MediaType.parseMediaType(
+                        "text/csv"
+                    )
+                )
+        )
+        .andExpect(
+            header().string(
+                HttpHeaders.CONTENT_DISPOSITION,
+                containsString("attachment")
+            )
+        )
+        .andExpect(
+            header().string(
+                HttpHeaders.CONTENT_DISPOSITION,
+                containsString(
+                    "wedding-responses.csv"
+                )
+            )
+        )
+        .andExpect(
+            content().string(csv)
+        );
+}
+
+@Test
+void nonAdminShouldBeForbiddenFromCsv()
+        throws Exception {
+
+    mockMvc.perform(
+        get("/api/admin/responses.csv")
+            .with(
+                user("normal-user")
+                    .roles("USER")
+            )
+    )
+        .andExpect(
+            status().isForbidden()
+        );
+}
+```
+
+---
+
+# 17. Qué comprueban estas pruebas
+
+## Anónimo
+
+```text
+GET /api/admin/responses.csv
+```
+
+sin sesión:
+
+```text
+302
+→ /login
+```
+
+## Administrador
+
+```text
+ROLE_ADMIN
+```
+
+debe recibir:
+
+```text
+HTTP 200
+text/csv
+Content-Disposition: attachment
+wedding-responses.csv
+```
+
+## Usuario sin rol
+
+```text
+ROLE_USER
+```
+
+debe recibir:
+
+```text
+403 Forbidden
+```
+
+Es la misma política de seguridad ya utilizada por el resto de `/api/admin/**`. ([Home][1])
+
+---
+
+# 18. Ejecutar `AdminControllerTest`
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=AdminControllerTest" test
+```
+
+## Git Bash
+
+```bash
+./mvnw -Dtest=AdminControllerTest test
+```
+
+Actualmente la clase contiene cinco pruebas; con las tres nuevas deberá ejecutar:
+
+```text
+Tests run: 8
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+---
+
+# 19. Paso 5 — Añadir el botón al panel
+
+No necesitamos JavaScript para descargar el archivo.
+
+El navegador puede navegar directamente a:
+
+```text
+/api/admin/responses.csv
+```
+
+y el servidor responderá con `Content-Disposition: attachment`.
+
+Por tanto, **`admin-app.js` no se modifica**.
+
+Esto mantiene la Fase 14 más sencilla.
+
+---
+
+# 20. Modificar `admin/index.html`
+
+Ruta:
+
+```text
+src/main/resources/static/admin/index.html
+```
+
+Actualmente después de los filtros aparece directamente:
+
+```html
+<div class="table-wrapper">
+```
+
+Justo **antes** de:
+
+```html
+<div class="table-wrapper">
+```
+
+añade:
+
+```html
+<div class="admin-export-actions">
+
+    <a
+        class="admin-export-link"
+        href="/api/admin/responses.csv"
+    >
+        Exportar CSV
+    </a>
+
+</div>
+```
+
+El bloque quedará conceptualmente:
+
+```html
+<div class="admin-filters">
+    ...
+</div>
+
+<div class="admin-export-actions">
+
+    <a
+        class="admin-export-link"
+        href="/api/admin/responses.csv"
+    >
+        Exportar CSV
+    </a>
+
+</div>
+
+<div class="table-wrapper">
+    ...
+</div>
+```
+
+---
+
+# 21. Por qué usamos `<a>` y no JavaScript
+
+No necesitamos:
+
+```javascript
+fetch(...)
+Blob
+URL.createObjectURL(...)
+document.createElement(...)
+```
+
+La descarga es una navegación HTTP normal.
+
+El servidor ya se ocupa de indicar:
+
+```text
+attachment
+filename
+content-type
+```
+
+Esto es más sencillo y añade menos código al frontend.
+
+---
+
+# 22. Paso 6 — Añadir CSS
+
+Ruta:
+
+```text
+src/main/resources/static/css/styles.css
+```
+
+La sección administrativa actual ya contiene los estilos para filtros, tabla y enlaces de sesión.
+
+Antes de:
+
+```css
+.table-wrapper {
+```
+
+añade:
+
+```css
+.admin-export-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 18px;
+}
+
+.admin-export-link {
+    display: inline-block;
+    padding: 10px 14px;
+    background-color: #222222;
+    border: 1px solid #222222;
+    border-radius: 6px;
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.admin-export-link:hover {
+    background-color: #444444;
+}
+
+.admin-export-link:focus {
+    outline: 2px solid #222222;
+    outline-offset: 3px;
+}
+```
+
+Dentro del `@media (max-width: 800px)` existente añade:
+
+```css
+.admin-export-link {
+    width: 100%;
+    text-align: center;
+}
+```
+
+Así el botón ocupará todo el ancho en pantallas pequeñas.
+
+---
+
+# 23. Resultado visual aproximado
+
+El panel pasará de:
+
+```text
+Buscar [__________] Estado [Todos ▼] [ ] Intolerancias
+
+┌──────────────────────────────────────────┐
+│ Tabla                                    │
+└──────────────────────────────────────────┘
+```
+
+a:
+
+```text
+Buscar [__________] Estado [Todos ▼] [ ] Intolerancias
+
+                              [ Exportar CSV ]
+
+┌──────────────────────────────────────────┐
+│ Tabla                                    │
+└──────────────────────────────────────────┘
+```
+
+En móvil:
+
+```text
+Buscar
+[________________]
+
+Estado
+[Todos          ▼]
+
+[ ] Solo con intolerancias
+
+[          Exportar CSV          ]
+
+┌───────────────────────────────→
+│ Tabla desplazable
+```
+
+---
+
+# 24. Paso 7 — Ejecutar las pruebas específicas
+
+Primero el servicio:
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=CsvExportServiceTest" test
+```
+
+## Git Bash
+
+```bash
+./mvnw -Dtest=CsvExportServiceTest test
+```
+
+Después el controlador:
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=AdminControllerTest" test
+```
+
+## Git Bash
+
+```bash
+./mvnw -Dtest=AdminControllerTest test
+```
+
+Ambos deben finalizar con:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+# 25. Paso 8 — Ejecutar toda la batería
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+## Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Debes obtener:
+
+```text
+Failures: 0
+Errors: 0
+BUILD SUCCESS
+```
+
+Esta comprobación es especialmente importante porque hemos modificado el constructor de:
+
+```java
+AdminController
+```
+
+y queremos verificar que ninguna prueba anterior haya quedado sin su nueva dependencia.
+
+---
+
+# 26. Paso 9 — Prueba manual
+
+Inicia la aplicación.
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd spring-boot:run
+```
+
+## Git Bash
+
+```bash
+./mvnw spring-boot:run
+```
+
+Abre:
+
+```text
+http://localhost:8080/admin/
+```
+
+Inicia sesión con tu administrador local.
+
+---
+
+## Comprobación 1 — Botón visible
+
+Debes ver:
+
+```text
+Exportar CSV
+```
+
+entre los filtros y la tabla.
+
+---
+
+## Comprobación 2 — Descarga
+
+Pulsa:
+
+```text
+Exportar CSV
+```
+
+Debe descargarse:
+
+```text
+wedding-responses.csv
+```
+
+---
+
+## Comprobación 3 — Cabecera
+
+Abre el archivo con un editor de texto.
+
+La primera línea debe ser:
+
+```csv
+Invitacion,NombreInvitado,Contacto,Estado,NumeroAsistentes,Intolerancias,ComentarioAdicional,FechaEnvio,UltimaActualizacion
+```
+
+---
+
+## Comprobación 4 — Datos
+
+Una respuesta existente debe contener:
+
+```text
+Invitación
+Nombre
+Contacto
+Estado
+Asistentes
+Intolerancias
+Comentario
+Fecha inicial
+Fecha de actualización
+```
+
+---
+
+## Comprobación 5 — Pendientes
+
+Una invitación sin respuesta debe aparecer también, por ejemplo:
+
+```csv
+"María López","","","PENDING","","","","",""
+```
+
+Esto permite utilizar el CSV también para comprobar quién falta por contestar.
+
+---
+
+## Comprobación 6 — Seguridad
+
+Cierra sesión.
+
+Intenta abrir directamente:
+
+```text
+http://localhost:8080/api/admin/responses.csv
+```
+
+Debes terminar en:
+
+```text
+/login
+```
+
+El archivo no debe descargarse anónimamente.
+
+---
+
+# 27. No es necesario modificar H2
+
+Esta fase:
+
+```text
+NO crea tablas.
+NO modifica columnas.
+NO modifica relaciones.
+NO inserta datos automáticamente.
+```
+
+Por tanto, no necesitas:
+
+```text
+borrar admitionum.mv.db
+recrear H2
+modificar ddl-auto
+crear una migración
+```
+
+El CSV solamente lee los datos existentes.
+
+---
+
+# 28. Errores habituales
+
+## Error: Spring no puede crear `AdminController`
+
+Mensaje similar:
+
+```text
+No qualifying bean of type CsvExportService
+```
+
+Comprueba que el archivo esté en:
+
+```text
+src/main/java/nc/admitionum/service/CsvExportService.java
+```
+
+y tenga:
+
+```java
+@Service
+```
+
+---
+
+## `AdminControllerTest` no inicia
+
+Si aparece un error relacionado con `CsvExportService`, seguramente falta:
+
+```java
+@MockitoBean
+private CsvExportService csvExportService;
+```
+
+El controlador ahora tiene dos dependencias.
+
+---
+
+## El CSV se abre en el navegador
+
+Comprueba:
+
+```java
+headers.setContentDisposition(
+    ContentDisposition
+        .attachment()
+        ...
+);
+```
+
+No uses:
+
+```text
+inline
+```
+
+`attachment` es precisamente el tipo de disposición destinado a descarga. ([Home][2])
+
+---
+
+## El archivo tiene nombre incorrecto
+
+Comprueba:
+
+```java
+.filename(
+    "wedding-responses.csv",
+    StandardCharsets.UTF_8
+)
+```
+
+---
+
+## Un comentario rompe las columnas
+
+No concatenes directamente:
+
+```java
+csv.append(comment);
+```
+
+Todos los valores deben pasar por:
+
+```java
+appendCsvValue(...)
+```
+
+Ese método se ocupa de las comillas.
+
+---
+
+## Aparecen tres columnas en lugar de una por una coma
+
+Comprueba que el valor esté rodeado por:
+
+```text
+"
+```
+
+Ejemplo correcto:
+
+```csv
+"Nos vemos, muchas gracias"
+```
+
+---
+
+## Las comillas aparecen mal
+
+Una comilla interna:
+
+```text
+"quizá"
+```
+
+debe transformarse en:
+
+```text
+""quizá""
+```
+
+dentro de una celda CSV.
+
+---
+
+## El teléfono `+34...` aparece con `'`
+
+Es correcto.
+
+Ejemplo:
+
+```text
+'+34 600 123 123
+```
+
+Es la neutralización prevista para impedir que el contenido empiece con `+` como fórmula.
+
+No elimines esta protección.
+
+---
+
+## `submittedAt` aparece vacío para pendientes
+
+Es correcto.
+
+Una invitación pendiente todavía no tiene una `RsvpResponse`, por lo que no existe:
+
+```text
+SubmittedAt
+UpdatedAt
+```
+
+---
+
+## El botón exporta filas que no estoy viendo por los filtros
+
+Es correcto en la versión 1.1.
+
+Los filtros de la Fase 13 son JavaScript local. El CSV de la Fase 14 exporta el conjunto administrativo completo.
+
+No implementaremos exportación filtrada en esta fase.
+
+---
+
+# 29. Resultado estructural esperado
+
+Producción:
+
+```text
+src/main/java/nc/admitionum/
+├── controller/
+│   ├── AdminController.java
+│   └── AdminPageController.java
+│
+└── service/
+    ├── AdminService.java
+    └── CsvExportService.java
+```
+
+Frontend:
+
+```text
+src/main/resources/static/
+├── admin/
+│   └── index.html
+│
+├── css/
+│   └── styles.css
+│
+└── js/
+    └── admin-app.js
+```
+
+`admin-app.js` debe permanecer sin cambios.
+
+Pruebas:
+
+```text
+src/test/java/nc/admitionum/
+├── controller/
+│   └── AdminControllerTest.java
+│
+└── service/
+    ├── AdminServiceTest.java
+    └── CsvExportServiceTest.java
+```
+
+---
+
+# 30. Revisar Git
+
+Ejecuta:
+
+```bash
+git status
+```
+
+Deberías ver aproximadamente:
+
+```text
+modified:
+  src/main/java/nc/admitionum/controller/AdminController.java
+
+new file:
+  src/main/java/nc/admitionum/service/CsvExportService.java
+
+modified:
+  src/main/resources/static/admin/index.html
+
+modified:
+  src/main/resources/static/css/styles.css
+
+modified:
+  src/test/java/nc/admitionum/controller/AdminControllerTest.java
+
+new file:
+  src/test/java/nc/admitionum/service/CsvExportServiceTest.java
+```
+
+No debería aparecer:
+
+```text
+pom.xml
+SecurityConfig.java
+application.properties
+data/
+target/
+*.mv.db
+```
+
+---
+
+# 31. Commits recomendados
+
+Podemos dividirlo en tres commits claros.
+
+## Backend
+
+```bash
+git add src/main/java/nc/admitionum/service/CsvExportService.java
+git add src/main/java/nc/admitionum/controller/AdminController.java
+
+git commit -m "feat: add CSV export endpoint"
+```
+
+## Pruebas
+
+```bash
+git add src/test/java/nc/admitionum/service/CsvExportServiceTest.java
+git add src/test/java/nc/admitionum/controller/AdminControllerTest.java
+
+git commit -m "test: verify CSV export"
+```
+
+## Panel
+
+```bash
+git add src/main/resources/static/admin/index.html
+git add src/main/resources/static/css/styles.css
+
+git commit -m "feat: add CSV export action to admin panel"
+```
+
+Después:
+
+```bash
+git push -u origin Phase14
+```
+
+Y podrás crear el pull request hacia:
+
+```text
+main
+```
+
+---
+
+# 32. Criterios de finalización
+
+La Fase 14 estará terminada cuando:
+
+```text
+[ ] La Fase 13.1 figura como completada.
+
+[ ] La rama Phase14 parte de main actualizado.
+
+[ ] Existe CsvExportService.java.
+
+[ ] CsvExportService utiliza AdminService.
+
+[ ] CsvExportService obtiene SubmittedAt desde RsvpResponse.
+
+[ ] No se ha añadido submittedAt a AdminRsvpResponse.
+
+[ ] El CSV tiene nueve columnas.
+
+[ ] La cabecera coincide con v1.1.
+
+[ ] Se exportan todas las invitaciones.
+
+[ ] Se incluyen las invitaciones pendientes.
+
+[ ] Las filas pendientes tienen vacíos los datos de respuesta.
+
+[ ] Los estados coinciden con la API administrativa.
+
+[ ] Los valores se rodean de comillas.
+
+[ ] Las comillas internas se duplican.
+
+[ ] Las comas no rompen columnas.
+
+[ ] Los saltos de línea no rompen el formato.
+
+[ ] Los valores que comienzan por = se neutralizan.
+
+[ ] Los valores que comienzan por + se neutralizan.
+
+[ ] Los valores que comienzan por - se neutralizan.
+
+[ ] Los valores que comienzan por @ se neutralizan.
+
+[ ] SubmittedAt se exporta.
+
+[ ] UpdatedAt se exporta.
+
+[ ] Existe GET /api/admin/responses.csv.
+
+[ ] El endpoint devuelve HTTP 200 para ROLE_ADMIN.
+
+[ ] El Content-Type es text/csv.
+
+[ ] Content-Disposition utiliza attachment.
+
+[ ] El archivo se llama wedding-responses.csv.
+
+[ ] Un usuario anónimo es redirigido a /login.
+
+[ ] ROLE_USER recibe HTTP 403.
+
+[ ] SecurityConfig.java no se ha modificado.
+
+[ ] Existe CsvExportServiceTest.
+
+[ ] AdminControllerTest contiene las pruebas CSV.
+
+[ ] CsvExportServiceTest finaliza correctamente.
+
+[ ] AdminControllerTest finaliza correctamente.
+
+[ ] mvnw clean test termina con BUILD SUCCESS.
+
+[ ] El panel contiene Exportar CSV.
+
+[ ] El enlace descarga correctamente el archivo.
+
+[ ] admin-app.js no ha sido modificado.
+
+[ ] No se ha modificado la base de datos.
+
+[ ] No se ha añadido Azure SQL.
+
+[ ] No se ha añadido Docker.
+
+[ ] Se han creado commits pequeños.
+
+[ ] La rama se ha subido a GitHub.
+```
+
+---
+
+# 33. Texto para el registro de trazabilidad
+
+Cuando hayas ejecutado realmente todas las comprobaciones y obtengas `BUILD SUCCESS`, puedes incorporar:
+
+```text
+Fase 14 — Exportación CSV administrativa
+
+Estado: completada.
+
+Objetivo:
+Permitir que el administrador descargue el conjunto completo
+de invitaciones y respuestas en formato CSV desde el panel
+administrativo.
+
+Endpoint:
+- GET /api/admin/responses.csv
+
+Archivo descargado:
+- wedding-responses.csv
+
+Archivos nuevos:
+- src/main/java/nc/admitionum/service/
+  CsvExportService.java
+- src/test/java/nc/admitionum/service/
+  CsvExportServiceTest.java
+
+Archivos modificados:
+- src/main/java/nc/admitionum/controller/
+  AdminController.java
+- src/test/java/nc/admitionum/controller/
+  AdminControllerTest.java
+- src/main/resources/static/admin/index.html
+- src/main/resources/static/css/styles.css
+
+Columnas CSV:
+- Invitacion.
+- NombreInvitado.
+- Contacto.
+- Estado.
+- NumeroAsistentes.
+- Intolerancias.
+- ComentarioAdicional.
+- FechaEnvio.
+- UltimaActualizacion.
+
+Comportamiento:
+- Se exportan todas las invitaciones.
+- Se incluyen las invitaciones sin respuesta.
+- Las invitaciones pendientes contienen vacíos los campos
+  correspondientes a RsvpResponse.
+- Los estados coinciden con los utilizados por AdminService.
+- SubmittedAt se obtiene desde RsvpResponse.
+- UpdatedAt procede de la respuesta administrativa.
+- No se ha modificado AdminRsvpResponse.
+
+Seguridad CSV:
+- Todos los valores se encapsulan entre comillas dobles.
+- Las comillas internas se duplican.
+- Las comas y saltos de línea se conservan dentro de la celda.
+- Los valores que comienzan por =, +, - o @ se neutralizan
+  mediante un apóstrofo inicial.
+
+Seguridad HTTP:
+- /api/admin/responses.csv queda protegido por la regla
+  /api/admin/** ya existente.
+- ROLE_ADMIN puede descargar el CSV.
+- Las peticiones anónimas se redirigen a /login.
+- Los usuarios sin ROLE_ADMIN reciben HTTP 403.
+- SecurityConfig.java no se ha modificado.
+
+Panel:
+- Se ha añadido el enlace Exportar CSV.
+- El enlace utiliza directamente:
+  /api/admin/responses.csv
+- No ha sido necesario modificar admin-app.js.
+
+Pruebas:
+- CsvExportServiceTest comprueba:
+  - columnas.
+  - datos.
+  - pendientes.
+  - fechas.
+  - neutralización de fórmulas.
+  - comillas.
+  - comas.
+  - saltos de línea.
+- AdminControllerTest comprueba:
+  - autenticación.
+  - autorización.
+  - HTTP 200.
+  - Content-Type.
+  - Content-Disposition.
+  - nombre del archivo.
+- mvnw clean test finaliza con BUILD SUCCESS.
+
+Persistencia:
+- No se han creado tablas.
+- No se han modificado entidades.
+- No se han modificado repositorios.
+- No se ha modificado H2.
+
+Elementos no desarrollados:
+- Azure SQL.
+- Docker.
+- Azure Container Apps.
+- GitHub Actions.
+
+Commits:
+- feat: add CSV export endpoint
+- test: verify CSV export
+- feat: add CSV export action to admin panel
+
+Siguiente fase:
+- Fase 15 — Conectar Azure SQL.
+```
+
+Una vez cierre esta fase, **la Fase 15 será el primer punto en el que empezaremos a tocar realmente la infraestructura de Azure y el esquema SQL de producción**; hasta entonces no cambiaremos ninguna configuración de base de datos.
+
+[1]: https://docs.spring.io/spring-security/reference/servlet/authorization/authorize-http-requests.html "https://docs.spring.io/spring-security/reference/servlet/authorization/authorize-http-requests.html"
+[2]: https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/ContentDisposition.html "https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/ContentDisposition.html"
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 15
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
