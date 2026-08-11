@@ -138,11 +138,11 @@ Forma de ayudarme:
 
 Estado actual completado:
 
-Fase 11.1
+Fase 12
 
 Fase que quiero desarrollar:
 
-Fase 12
+Fase 13
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
@@ -25146,6 +25146,2891 @@ La **Fase 11.1 no sustituye a la Fase 11**: queda registrada como una rectificac
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
 Fase 12
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+# Fase 12 — Crear API administrativa
+
+He revisado el registro de trazabilidad v11.1 y lo he contrastado con el estado actual de `main`.
+
+El Documento Maestro establece expresamente este orden: **Fase 11 Spring Security → Fase 12 API administrativa → Fase 13 panel administrativo → Fase 14 exportación CSV**. 
+
+Además, `main` ya contiene la configuración que protege `/admin/**` y `/api/admin/**` mediante `ROLE_ADMIN`, manteniendo pública `/api/public/**`.  La corrección de la Fase 11.1 también está incorporada: `SecurityConfigTest` utiliza ya `redirectedUrl("/login")` en las dos comprobaciones que habían fallado.
+
+Por tanto:
+
+```text
+Fase 1    — Spring Boot: completada.
+Fase 2    — API de prueba: completada.
+Fase 3    — Invitation: completada.
+Fase 4    — Consulta pública: completada.
+Fase 5    — RsvpResponse: completada.
+Fase 6    — SaveRsvpRequest: completada.
+Fase 7    — Guardar/actualizar respuesta: completada.
+Fase 8    — Validaciones: completada.
+Fase 9    — HTML/CSS público: completada.
+Fase 10   — JavaScript público: completada.
+Fase 10.1 — Límite de asistentes: completada.
+Fase 11   — Spring Security: completada.
+Fase 11.1 — Corrección de tests de seguridad: completada.
+Fase 12   — API administrativa: siguiente fase correcta.
+```
+
+---
+
+# 1. Alcance exacto de la Fase 12
+
+En esta fase construiremos exclusivamente el **backend administrativo de lectura**.
+
+Al terminar existirán:
+
+```http
+GET /api/admin/dashboard
+
+GET /api/admin/responses
+```
+
+El primero devolverá estadísticas generales.
+
+El segundo devolverá todas las invitaciones con sus respuestas, incluyendo las que todavía estén pendientes.
+
+El flujo será:
+
+```text
+Administrador autenticado
+          │
+          ▼
+   /api/admin/**
+          │
+          ▼
+    AdminController
+          │
+          ▼
+      AdminService
+       │       │
+       ▼       ▼
+Invitation   RsvpResponse
+Repository   Repository
+       │       │
+       └───┬───┘
+           ▼
+           H2
+```
+
+Los datos saldrán mediante DTO:
+
+```text
+Entidades JPA
+     │
+     ▼
+ AdminService
+     │
+     ├── AdminDashboardResponse
+     │
+     └── AdminRsvpResponse
+```
+
+No se devolverán entidades JPA directamente.
+
+El Documento Maestro ya define el dashboard, los dos DTO administrativos y los estados `PENDING`, `CONFIRMED`, `DECLINED`, `DISABLED` y `EXPIRED`. 
+
+---
+
+# 2. Qué NO desarrollaremos todavía
+
+No crearemos:
+
+```text
+/admin/index.html
+admin-app.js
+CSS administrativo
+
+Panel visual
+Tarjetas visuales
+Tabla HTML
+Campo de búsqueda
+Select de filtros
+
+Exportación CSV
+CsvExportService
+
+Azure SQL
+database/schema.sql definitivo
+
+Docker
+Azure Container Apps
+GitHub Actions
+```
+
+La separación queda:
+
+```text
+Fase 12
+Backend administrativo.
+
+Fase 13
+Interfaz administrativa HTML/JS.
+
+Fase 14
+Exportación CSV.
+```
+
+Tampoco implementaremos todavía parámetros como:
+
+```text
+?search=garcia
+?status=confirmed
+?hasIntolerances=true
+```
+
+Aunque aparecen como ejemplos en el Documento Maestro, este también establece que en el MVP los filtros pueden hacerse en JavaScript sobre la colección descargada. Por tanto, pertenecen al panel de la Fase 13 y **no necesitamos consultas dinámicas ahora**. 
+
+---
+
+# 3. Contradicciones y decisiones de trazabilidad
+
+Hay dos puntos que conviene fijar antes de escribir código.
+
+## 3.1. La sección «Fase 12» del historial está vacía
+
+Esto no impide continuar.
+
+El Documento Maestro sí define:
+
+```text
+12. Crear API administrativa.
+13. Crear panel administrativo v1.1.
+14. Crear exportación CSV.
+```
+
+Y la propia Fase 11 dejó expresamente pendientes para esta fase:
+
+```text
+AdminController
+AdminService
+AdminDashboardResponse
+AdminRsvpResponse
+
+GET /api/admin/dashboard
+GET /api/admin/responses
+```
+
+
+
+Por tanto, ese será exactamente nuestro alcance.
+
+---
+
+## 3.2. `submittedAt` en el DTO administrativo
+
+El documento general dice que el administrador podrá consultar:
+
+```text
+Fecha de envío.
+Fecha de última actualización.
+```
+
+Sin embargo, la definición específica de:
+
+```java
+AdminRsvpResponse
+```
+
+contiene únicamente:
+
+```java
+private LocalDateTime updatedAt;
+```
+
+
+
+Para no alterar el DTO definido expresamente sin tu aprobación, **en la Fase 12 conservaremos exactamente `updatedAt` y no añadiremos `submittedAt`**.
+
+`submittedAt` sigue existiendo en `RsvpResponse` y podrá utilizarse posteriormente en la exportación CSV de la Fase 14.
+
+---
+
+# 4. Estado actual que aprovecharemos
+
+Ya existen:
+
+```text
+InvitationRepository
+RsvpResponseRepository
+```
+
+`InvitationRepository` extiende `JpaRepository`, por lo que ya dispone de `findAll()`.
+
+`RsvpResponseRepository` también extiende `JpaRepository` y mantiene `findByInvitationId(...)`.
+
+Por tanto:
+
+**no modificaremos ninguno de los dos repositorios.**
+
+Usaremos simplemente:
+
+```java
+invitationRepository.findAll();
+
+rsvpResponseRepository.findAll();
+```
+
+Para el volumen de una boda es una solución sencilla y suficiente.
+
+No vamos a crear una consulta SQL compleja ni un `JOIN` personalizado.
+
+---
+
+# 5. Archivos que crearemos
+
+Producción:
+
+```text
+src/main/java/nc/admitionum/
+├── controller/
+│   └── AdminController.java
+│
+├── dto/
+│   └── admin/
+│       ├── AdminDashboardResponse.java
+│       └── AdminRsvpResponse.java
+│
+└── service/
+    └── AdminService.java
+```
+
+Pruebas:
+
+```text
+src/test/java/nc/admitionum/
+├── controller/
+│   └── AdminControllerTest.java
+│
+└── service/
+    └── AdminServiceTest.java
+```
+
+No modificaremos inicialmente ningún archivo existente.
+
+---
+
+# 6. Resultado de la API
+
+## Dashboard
+
+```http
+GET /api/admin/dashboard
+```
+
+Ejemplo:
+
+```json
+{
+  "totalInvitations": 80,
+  "answeredInvitations": 52,
+  "pendingInvitations": 28,
+  "confirmedInvitations": 40,
+  "declinedInvitations": 12,
+  "confirmedAttendees": 93,
+  "responsesWithIntolerances": 8
+}
+```
+
+Es exactamente la estructura definida en v1.1. 
+
+---
+
+# 7. Lista administrativa
+
+```http
+GET /api/admin/responses
+```
+
+Ejemplo:
+
+```json
+[
+  {
+    "invitationId": 1,
+    "displayName": "Familia García",
+    "maxGuests": 4,
+    "status": "CONFIRMED",
+    "guestName": "Ana García",
+    "contact": "ana@example.com",
+    "attendeeCount": 3,
+    "intolerances": "Intolerancia a la lactosa",
+    "additionalComment": "Llegaremos el viernes",
+    "updatedAt": "2026-08-11T15:30:00"
+  },
+  {
+    "invitationId": 2,
+    "displayName": "Familia López",
+    "maxGuests": 2,
+    "status": "PENDING",
+    "guestName": null,
+    "contact": null,
+    "attendeeCount": null,
+    "intolerances": null,
+    "additionalComment": null,
+    "updatedAt": null
+  }
+]
+```
+
+Es importante incluir las pendientes.
+
+Si utilizásemos únicamente:
+
+```java
+rsvpResponseRepository.findAll()
+```
+
+perderíamos las invitaciones que no han respondido.
+
+Por eso partiremos de:
+
+```java
+invitationRepository.findAll()
+```
+
+y relacionaremos cada invitación con su posible `RsvpResponse`.
+
+---
+
+# 8. Estados administrativos
+
+Utilizaremos exactamente:
+
+```text
+PENDING
+CONFIRMED
+DECLINED
+DISABLED
+EXPIRED
+```
+
+La regla será:
+
+```text
+¿Existe respuesta?
+
+Sí
+ ├── AttendanceConfirmed = true
+ │      → CONFIRMED
+ │
+ └── AttendanceConfirmed = false
+        → DECLINED
+
+No
+ ├── IsActive = false
+ │      → DISABLED
+ │
+ ├── ExpiresAt ya pasó
+ │      → EXPIRED
+ │
+ └── En otro caso
+        → PENDING
+```
+
+Esta prioridad tiene una razón práctica: una persona que ya confirmó continúa figurando como `CONFIRMED` aunque posteriormente expire el plazo del formulario.
+
+La expiración impide nuevas respuestas; no debe borrar conceptualmente una confirmación ya existente.
+
+---
+
+# 9. Paso 0 — Crear la rama
+
+Desde:
+
+```text
+C:\Users\proto\Proyectos\admitionum
+```
+
+Primero:
+
+```bash
+git status
+```
+
+Después:
+
+```bash
+git switch main
+git pull
+```
+
+Crea la rama:
+
+```bash
+git switch -c Phase12
+```
+
+Si ya existe:
+
+```bash
+git switch Phase12
+```
+
+---
+
+# 10. Prueba inicial antes de modificar nada
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+## Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Debe terminar con:
+
+```text
+BUILD SUCCESS
+```
+
+No avances si el proyecto falla antes de empezar la Fase 12.
+
+---
+
+# 11. Paso 1 — Crear `AdminDashboardResponse`
+
+Crea la carpeta si todavía no existe:
+
+```text
+src/main/java/nc/admitionum/dto/admin/
+```
+
+Archivo:
+
+```text
+src/main/java/nc/admitionum/dto/admin/AdminDashboardResponse.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.dto.admin;
+
+public class AdminDashboardResponse {
+
+    private int totalInvitations;
+    private int answeredInvitations;
+    private int pendingInvitations;
+    private int confirmedInvitations;
+    private int declinedInvitations;
+    private int confirmedAttendees;
+    private int responsesWithIntolerances;
+
+    public AdminDashboardResponse() {
+    }
+
+    public AdminDashboardResponse(
+            int totalInvitations,
+            int answeredInvitations,
+            int pendingInvitations,
+            int confirmedInvitations,
+            int declinedInvitations,
+            int confirmedAttendees,
+            int responsesWithIntolerances) {
+
+        this.totalInvitations = totalInvitations;
+        this.answeredInvitations = answeredInvitations;
+        this.pendingInvitations = pendingInvitations;
+        this.confirmedInvitations = confirmedInvitations;
+        this.declinedInvitations = declinedInvitations;
+        this.confirmedAttendees = confirmedAttendees;
+        this.responsesWithIntolerances =
+            responsesWithIntolerances;
+    }
+
+    public int getTotalInvitations() {
+        return totalInvitations;
+    }
+
+    public void setTotalInvitations(
+            int totalInvitations) {
+
+        this.totalInvitations = totalInvitations;
+    }
+
+    public int getAnsweredInvitations() {
+        return answeredInvitations;
+    }
+
+    public void setAnsweredInvitations(
+            int answeredInvitations) {
+
+        this.answeredInvitations = answeredInvitations;
+    }
+
+    public int getPendingInvitations() {
+        return pendingInvitations;
+    }
+
+    public void setPendingInvitations(
+            int pendingInvitations) {
+
+        this.pendingInvitations = pendingInvitations;
+    }
+
+    public int getConfirmedInvitations() {
+        return confirmedInvitations;
+    }
+
+    public void setConfirmedInvitations(
+            int confirmedInvitations) {
+
+        this.confirmedInvitations = confirmedInvitations;
+    }
+
+    public int getDeclinedInvitations() {
+        return declinedInvitations;
+    }
+
+    public void setDeclinedInvitations(
+            int declinedInvitations) {
+
+        this.declinedInvitations = declinedInvitations;
+    }
+
+    public int getConfirmedAttendees() {
+        return confirmedAttendees;
+    }
+
+    public void setConfirmedAttendees(
+            int confirmedAttendees) {
+
+        this.confirmedAttendees = confirmedAttendees;
+    }
+
+    public int getResponsesWithIntolerances() {
+        return responsesWithIntolerances;
+    }
+
+    public void setResponsesWithIntolerances(
+            int responsesWithIntolerances) {
+
+        this.responsesWithIntolerances =
+            responsesWithIntolerances;
+    }
+}
+```
+
+## Qué representa
+
+No es una entidad.
+
+No tiene:
+
+```java
+@Entity
+@Table
+@Id
+```
+
+Simplemente representa este JSON:
+
+```text
+AdminService
+     │
+     ▼
+AdminDashboardResponse
+     │
+     ▼
+JSON
+```
+
+---
+
+# 12. Prueba después del DTO
+
+No tenemos todavía lógica que probar, pero sí podemos comprobar que compila.
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd -DskipTests compile
+```
+
+## Git Bash
+
+```bash
+./mvnw -DskipTests compile
+```
+
+Resultado:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+# 13. Paso 2 — Crear `AdminRsvpResponse`
+
+Ruta:
+
+```text
+src/main/java/nc/admitionum/dto/admin/AdminRsvpResponse.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.dto.admin;
+
+import java.time.LocalDateTime;
+
+public class AdminRsvpResponse {
+
+    private Integer invitationId;
+    private String displayName;
+    private Integer maxGuests;
+    private String status;
+
+    private String guestName;
+    private String contact;
+    private Integer attendeeCount;
+    private String intolerances;
+    private String additionalComment;
+
+    private LocalDateTime updatedAt;
+
+    public AdminRsvpResponse() {
+    }
+
+    public AdminRsvpResponse(
+            Integer invitationId,
+            String displayName,
+            Integer maxGuests,
+            String status,
+            String guestName,
+            String contact,
+            Integer attendeeCount,
+            String intolerances,
+            String additionalComment,
+            LocalDateTime updatedAt) {
+
+        this.invitationId = invitationId;
+        this.displayName = displayName;
+        this.maxGuests = maxGuests;
+        this.status = status;
+        this.guestName = guestName;
+        this.contact = contact;
+        this.attendeeCount = attendeeCount;
+        this.intolerances = intolerances;
+        this.additionalComment = additionalComment;
+        this.updatedAt = updatedAt;
+    }
+
+    public Integer getInvitationId() {
+        return invitationId;
+    }
+
+    public void setInvitationId(
+            Integer invitationId) {
+
+        this.invitationId = invitationId;
+    }
+
+    public String getDisplayName() {
+        return displayName;
+    }
+
+    public void setDisplayName(
+            String displayName) {
+
+        this.displayName = displayName;
+    }
+
+    public Integer getMaxGuests() {
+        return maxGuests;
+    }
+
+    public void setMaxGuests(
+            Integer maxGuests) {
+
+        this.maxGuests = maxGuests;
+    }
+
+    public String getStatus() {
+        return status;
+    }
+
+    public void setStatus(
+            String status) {
+
+        this.status = status;
+    }
+
+    public String getGuestName() {
+        return guestName;
+    }
+
+    public void setGuestName(
+            String guestName) {
+
+        this.guestName = guestName;
+    }
+
+    public String getContact() {
+        return contact;
+    }
+
+    public void setContact(
+            String contact) {
+
+        this.contact = contact;
+    }
+
+    public Integer getAttendeeCount() {
+        return attendeeCount;
+    }
+
+    public void setAttendeeCount(
+            Integer attendeeCount) {
+
+        this.attendeeCount = attendeeCount;
+    }
+
+    public String getIntolerances() {
+        return intolerances;
+    }
+
+    public void setIntolerances(
+            String intolerances) {
+
+        this.intolerances = intolerances;
+    }
+
+    public String getAdditionalComment() {
+        return additionalComment;
+    }
+
+    public void setAdditionalComment(
+            String additionalComment) {
+
+        this.additionalComment = additionalComment;
+    }
+
+    public LocalDateTime getUpdatedAt() {
+        return updatedAt;
+    }
+
+    public void setUpdatedAt(
+            LocalDateTime updatedAt) {
+
+        this.updatedAt = updatedAt;
+    }
+}
+```
+
+---
+
+# 14. Datos nulos en una invitación pendiente
+
+Una invitación pendiente no tiene `RsvpResponse`.
+
+Por tanto, esto es correcto:
+
+```json
+{
+  "status": "PENDING",
+  "guestName": null,
+  "contact": null,
+  "attendeeCount": null,
+  "intolerances": null,
+  "additionalComment": null,
+  "updatedAt": null
+}
+```
+
+No debemos inventar:
+
+```text
+attendeeCount = 0
+```
+
+porque:
+
+```text
+0 = el invitado respondió que no va.
+
+null = todavía no existe respuesta.
+```
+
+Es una diferencia importante.
+
+---
+
+# 15. Prueba después del segundo DTO
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd -DskipTests compile
+```
+
+## Git Bash
+
+```bash
+./mvnw -DskipTests compile
+```
+
+Debe seguir:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+# 16. Paso 3 — Crear `AdminService`
+
+Ruta:
+
+```text
+src/main/java/nc/admitionum/service/AdminService.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.service;
+
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import nc.admitionum.dto.admin.AdminDashboardResponse;
+import nc.admitionum.dto.admin.AdminRsvpResponse;
+import nc.admitionum.model.Invitation;
+import nc.admitionum.model.RsvpResponse;
+import nc.admitionum.repository.InvitationRepository;
+import nc.admitionum.repository.RsvpResponseRepository;
+
+@Service
+@Transactional(readOnly = true)
+public class AdminService {
+
+    private final InvitationRepository invitationRepository;
+    private final RsvpResponseRepository rsvpResponseRepository;
+
+    public AdminService(
+            InvitationRepository invitationRepository,
+            RsvpResponseRepository rsvpResponseRepository) {
+
+        this.invitationRepository = invitationRepository;
+        this.rsvpResponseRepository =
+            rsvpResponseRepository;
+    }
+
+    public AdminDashboardResponse getDashboard() {
+
+        List<Invitation> invitations =
+            invitationRepository.findAll();
+
+        List<RsvpResponse> responses =
+            rsvpResponseRepository.findAll();
+
+        int totalInvitations =
+            invitations.size();
+
+        int answeredInvitations =
+            responses.size();
+
+        int pendingInvitations = 0;
+        int confirmedInvitations = 0;
+        int declinedInvitations = 0;
+        int confirmedAttendees = 0;
+        int responsesWithIntolerances = 0;
+
+        Map<Integer, RsvpResponse>
+                responsesByInvitationId =
+                    createResponseMap(responses);
+
+        LocalDateTime nowUtc =
+            LocalDateTime.now(ZoneOffset.UTC);
+
+        for (Invitation invitation : invitations) {
+
+            RsvpResponse response =
+                responsesByInvitationId.get(
+                    invitation.getId()
+                );
+
+            String status =
+                determineStatus(
+                    invitation,
+                    response,
+                    nowUtc
+                );
+
+            if ("PENDING".equals(status)) {
+                pendingInvitations++;
+            }
+        }
+
+        for (RsvpResponse response : responses) {
+
+            if (Boolean.TRUE.equals(
+                    response.getAttendanceConfirmed())) {
+
+                confirmedInvitations++;
+
+                Integer attendeeCount =
+                    response.getAttendeeCount();
+
+                if (attendeeCount != null) {
+                    confirmedAttendees +=
+                        attendeeCount;
+                }
+
+                if (hasText(
+                        response.getIntolerances())) {
+
+                    responsesWithIntolerances++;
+                }
+
+            } else {
+                declinedInvitations++;
+            }
+        }
+
+        return new AdminDashboardResponse(
+            totalInvitations,
+            answeredInvitations,
+            pendingInvitations,
+            confirmedInvitations,
+            declinedInvitations,
+            confirmedAttendees,
+            responsesWithIntolerances
+        );
+    }
+
+    public List<AdminRsvpResponse> getResponses() {
+
+        List<Invitation> invitations =
+            invitationRepository.findAll();
+
+        List<RsvpResponse> responses =
+            rsvpResponseRepository.findAll();
+
+        Map<Integer, RsvpResponse>
+                responsesByInvitationId =
+                    createResponseMap(responses);
+
+        LocalDateTime nowUtc =
+            LocalDateTime.now(ZoneOffset.UTC);
+
+        List<AdminRsvpResponse> result =
+            new ArrayList<>();
+
+        for (Invitation invitation : invitations) {
+
+            RsvpResponse response =
+                responsesByInvitationId.get(
+                    invitation.getId()
+                );
+
+            result.add(
+                createAdminResponse(
+                    invitation,
+                    response,
+                    nowUtc
+                )
+            );
+        }
+
+        result.sort(
+            Comparator.comparing(
+                AdminRsvpResponse::getDisplayName,
+                String.CASE_INSENSITIVE_ORDER
+            )
+        );
+
+        return result;
+    }
+
+    private Map<Integer, RsvpResponse>
+            createResponseMap(
+                    List<RsvpResponse> responses) {
+
+        Map<Integer, RsvpResponse> result =
+            new HashMap<>();
+
+        for (RsvpResponse response : responses) {
+
+            Invitation invitation =
+                response.getInvitation();
+
+            if (invitation != null
+                    && invitation.getId() != null) {
+
+                result.put(
+                    invitation.getId(),
+                    response
+                );
+            }
+        }
+
+        return result;
+    }
+
+    private AdminRsvpResponse createAdminResponse(
+            Invitation invitation,
+            RsvpResponse response,
+            LocalDateTime nowUtc) {
+
+        String status =
+            determineStatus(
+                invitation,
+                response,
+                nowUtc
+            );
+
+        if (response == null) {
+
+            return new AdminRsvpResponse(
+                invitation.getId(),
+                invitation.getDisplayName(),
+                invitation.getMaxGuests(),
+                status,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null
+            );
+        }
+
+        return new AdminRsvpResponse(
+            invitation.getId(),
+            invitation.getDisplayName(),
+            invitation.getMaxGuests(),
+            status,
+            response.getGuestName(),
+            response.getContact(),
+            response.getAttendeeCount(),
+            response.getIntolerances(),
+            response.getAdditionalComment(),
+            response.getUpdatedAt()
+        );
+    }
+
+    private String determineStatus(
+            Invitation invitation,
+            RsvpResponse response,
+            LocalDateTime nowUtc) {
+
+        if (response != null) {
+
+            if (Boolean.TRUE.equals(
+                    response.getAttendanceConfirmed())) {
+
+                return "CONFIRMED";
+            }
+
+            return "DECLINED";
+        }
+
+        if (!Boolean.TRUE.equals(
+                invitation.getIsActive())) {
+
+            return "DISABLED";
+        }
+
+        LocalDateTime expiresAt =
+            invitation.getExpiresAt();
+
+        if (expiresAt != null
+                && !expiresAt.isAfter(nowUtc)) {
+
+            return "EXPIRED";
+        }
+
+        return "PENDING";
+    }
+
+    private boolean hasText(String value) {
+
+        return value != null
+            && !value.isBlank();
+    }
+}
+```
+
+---
+
+# 17. Explicación de `AdminService`
+
+## `@Service`
+
+```java
+@Service
+```
+
+Declara la clase como servicio de Spring.
+
+Su responsabilidad es:
+
+```text
+Obtener datos
++
+Aplicar reglas administrativas
++
+Construir DTO
+```
+
+El controlador no realizará cálculos.
+
+---
+
+## `@Transactional(readOnly = true)`
+
+```java
+@Transactional(readOnly = true)
+```
+
+Esta fase solo consulta datos.
+
+No vamos a:
+
+```text
+INSERT
+UPDATE
+DELETE
+```
+
+desde administración.
+
+---
+
+# 18. Por qué utiliza ambos repositorios
+
+Necesitamos conocer:
+
+```text
+todas las invitaciones
+```
+
+y:
+
+```text
+todas las respuestas existentes
+```
+
+Si solamente consultamos respuestas:
+
+```text
+Familia García → respondió
+Familia López  → respondió
+```
+
+desaparecería:
+
+```text
+Familia Martín → PENDING
+```
+
+Por eso:
+
+```java
+invitationRepository.findAll();
+```
+
+es la lista principal.
+
+---
+
+# 19. `createResponseMap`
+
+Transformamos:
+
+```text
+List<RsvpResponse>
+```
+
+en:
+
+```text
+InvitationId → RsvpResponse
+```
+
+Ejemplo:
+
+```text
+1 → Respuesta Ana
+3 → Respuesta Carlos
+7 → Respuesta María
+```
+
+Después podemos preguntar:
+
+```java
+responsesByInvitationId.get(
+    invitation.getId()
+);
+```
+
+Si devuelve:
+
+```text
+null
+```
+
+la invitación todavía no tiene respuesta.
+
+---
+
+# 20. Cálculo del dashboard
+
+Con:
+
+```text
+4 invitaciones
+
+3 respuestas:
+- Sí, 3 personas, con intolerancia.
+- Sí, 1 persona.
+- No, 0 personas.
+```
+
+obtenemos:
+
+```text
+totalInvitations = 4
+answeredInvitations = 3
+pendingInvitations = 1
+
+confirmedInvitations = 2
+declinedInvitations = 1
+
+confirmedAttendees = 4
+
+responsesWithIntolerances = 1
+```
+
+Solo contamos intolerancias en respuestas confirmadas, coherente con la consulta SQL de referencia del Documento Maestro. 
+
+---
+
+# 21. Paso 4 — Crear `AdminServiceTest`
+
+Ruta:
+
+```text
+src/test/java/nc/admitionum/service/AdminServiceTest.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.BDDMockito.given;
+
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import nc.admitionum.dto.admin.AdminDashboardResponse;
+import nc.admitionum.dto.admin.AdminRsvpResponse;
+import nc.admitionum.model.Invitation;
+import nc.admitionum.model.RsvpResponse;
+import nc.admitionum.repository.InvitationRepository;
+import nc.admitionum.repository.RsvpResponseRepository;
+
+@ExtendWith(MockitoExtension.class)
+class AdminServiceTest {
+
+    @Mock
+    private InvitationRepository invitationRepository;
+
+    @Mock
+    private RsvpResponseRepository rsvpResponseRepository;
+
+    @InjectMocks
+    private AdminService adminService;
+
+    @Test
+    void shouldCalculateDashboard() {
+
+        Invitation invitation1 =
+            createInvitation(
+                1,
+                "Familia Uno",
+                true,
+                null
+            );
+
+        Invitation invitation2 =
+            createInvitation(
+                2,
+                "Familia Dos",
+                true,
+                null
+            );
+
+        Invitation invitation3 =
+            createInvitation(
+                3,
+                "Familia Tres",
+                true,
+                null
+            );
+
+        Invitation invitation4 =
+            createInvitation(
+                4,
+                "Familia Cuatro",
+                true,
+                null
+            );
+
+        RsvpResponse response1 =
+            createResponse(
+                1,
+                invitation1,
+                true,
+                3,
+                "Intolerancia a la lactosa"
+            );
+
+        RsvpResponse response2 =
+            createResponse(
+                2,
+                invitation2,
+                true,
+                1,
+                null
+            );
+
+        RsvpResponse response3 =
+            createResponse(
+                3,
+                invitation3,
+                false,
+                0,
+                null
+            );
+
+        given(
+            invitationRepository.findAll()
+        ).willReturn(
+            List.of(
+                invitation1,
+                invitation2,
+                invitation3,
+                invitation4
+            )
+        );
+
+        given(
+            rsvpResponseRepository.findAll()
+        ).willReturn(
+            List.of(
+                response1,
+                response2,
+                response3
+            )
+        );
+
+        AdminDashboardResponse result =
+            adminService.getDashboard();
+
+        assertThat(
+            result.getTotalInvitations()
+        ).isEqualTo(4);
+
+        assertThat(
+            result.getAnsweredInvitations()
+        ).isEqualTo(3);
+
+        assertThat(
+            result.getPendingInvitations()
+        ).isEqualTo(1);
+
+        assertThat(
+            result.getConfirmedInvitations()
+        ).isEqualTo(2);
+
+        assertThat(
+            result.getDeclinedInvitations()
+        ).isEqualTo(1);
+
+        assertThat(
+            result.getConfirmedAttendees()
+        ).isEqualTo(4);
+
+        assertThat(
+            result.getResponsesWithIntolerances()
+        ).isEqualTo(1);
+    }
+
+    @Test
+    void shouldReturnInvitationsWithCalculatedStatuses() {
+
+        LocalDateTime nowUtc =
+            LocalDateTime.now(ZoneOffset.UTC);
+
+        Invitation confirmed =
+            createInvitation(
+                1,
+                "A Confirmada",
+                true,
+                null
+            );
+
+        Invitation declined =
+            createInvitation(
+                2,
+                "B Rechazada",
+                true,
+                null
+            );
+
+        Invitation pending =
+            createInvitation(
+                3,
+                "C Pendiente",
+                true,
+                null
+            );
+
+        Invitation disabled =
+            createInvitation(
+                4,
+                "D Desactivada",
+                false,
+                null
+            );
+
+        Invitation expired =
+            createInvitation(
+                5,
+                "E Expirada",
+                true,
+                nowUtc.minusDays(1)
+            );
+
+        RsvpResponse confirmedResponse =
+            createResponse(
+                1,
+                confirmed,
+                true,
+                2,
+                "Sin gluten"
+            );
+
+        RsvpResponse declinedResponse =
+            createResponse(
+                2,
+                declined,
+                false,
+                0,
+                null
+            );
+
+        given(
+            invitationRepository.findAll()
+        ).willReturn(
+            List.of(
+                confirmed,
+                declined,
+                pending,
+                disabled,
+                expired
+            )
+        );
+
+        given(
+            rsvpResponseRepository.findAll()
+        ).willReturn(
+            List.of(
+                confirmedResponse,
+                declinedResponse
+            )
+        );
+
+        List<AdminRsvpResponse> result =
+            adminService.getResponses();
+
+        assertThat(result)
+            .hasSize(5);
+
+        assertThat(result)
+            .extracting(
+                AdminRsvpResponse::getStatus
+            )
+            .containsExactly(
+                "CONFIRMED",
+                "DECLINED",
+                "PENDING",
+                "DISABLED",
+                "EXPIRED"
+            );
+
+        assertThat(
+            result.get(0).getGuestName()
+        ).isEqualTo("Invitado 1");
+
+        assertThat(
+            result.get(0).getAttendeeCount()
+        ).isEqualTo(2);
+
+        assertThat(
+            result.get(2).getGuestName()
+        ).isNull();
+
+        assertThat(
+            result.get(2).getAttendeeCount()
+        ).isNull();
+    }
+
+    private Invitation createInvitation(
+            Integer id,
+            String displayName,
+            Boolean isActive,
+            LocalDateTime expiresAt) {
+
+        Invitation invitation =
+            new Invitation(
+                "ADMIN-CODE-" + id,
+                displayName,
+                4,
+                isActive,
+                expiresAt
+            );
+
+        invitation.setId(id);
+
+        return invitation;
+    }
+
+    private RsvpResponse createResponse(
+            Integer id,
+            Invitation invitation,
+            Boolean attendanceConfirmed,
+            Integer attendeeCount,
+            String intolerances) {
+
+        RsvpResponse response =
+            new RsvpResponse(
+                invitation,
+                "Invitado " + id,
+                "contacto" + id + "@example.com",
+                attendanceConfirmed,
+                attendeeCount,
+                intolerances,
+                "Comentario " + id
+            );
+
+        response.setId(id);
+
+        LocalDateTime submittedAt =
+            LocalDateTime.of(
+                2026,
+                8,
+                1,
+                10,
+                0
+            ).plusMinutes(id);
+
+        response.setSubmittedAt(submittedAt);
+        response.setUpdatedAt(
+            submittedAt.plusHours(1)
+        );
+
+        return response;
+    }
+}
+```
+
+---
+
+# 22. Ejecutar únicamente `AdminServiceTest`
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=AdminServiceTest" test
+```
+
+## Git Bash
+
+```bash
+./mvnw -Dtest=AdminServiceTest test
+```
+
+Resultado esperado:
+
+```text
+Tests run: 2
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+No intervienen:
+
+```text
+Spring Boot
+Tomcat
+H2
+```
+
+Mockito sustituye los repositorios.
+
+---
+
+# 23. Paso 5 — Crear `AdminController`
+
+Ruta:
+
+```text
+src/main/java/nc/admitionum/controller/AdminController.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.controller;
+
+import java.util.List;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import nc.admitionum.dto.admin.AdminDashboardResponse;
+import nc.admitionum.dto.admin.AdminRsvpResponse;
+import nc.admitionum.service.AdminService;
+
+@RestController
+@RequestMapping("/api/admin")
+public class AdminController {
+
+    private final AdminService adminService;
+
+    public AdminController(
+            AdminService adminService) {
+
+        this.adminService = adminService;
+    }
+
+    @GetMapping("/dashboard")
+    public ResponseEntity<AdminDashboardResponse>
+            getDashboard() {
+
+        AdminDashboardResponse response =
+            adminService.getDashboard();
+
+        return ResponseEntity.ok(response);
+    }
+
+    @GetMapping("/responses")
+    public ResponseEntity<List<AdminRsvpResponse>>
+            getResponses() {
+
+        List<AdminRsvpResponse> response =
+            adminService.getResponses();
+
+        return ResponseEntity.ok(response);
+    }
+}
+```
+
+---
+
+# 24. Qué hace el controlador
+
+Ruta común:
+
+```java
+@RequestMapping("/api/admin")
+```
+
+Primer método:
+
+```java
+@GetMapping("/dashboard")
+```
+
+Resultado:
+
+```text
+/api/admin/dashboard
+```
+
+Segundo:
+
+```java
+@GetMapping("/responses")
+```
+
+Resultado:
+
+```text
+/api/admin/responses
+```
+
+El controlador no comprueba manualmente:
+
+```java
+if (usuarioEsAdmin)
+```
+
+porque ya existe Spring Security.
+
+La Fase 11 tiene esta regla:
+
+```java
+.requestMatchers(
+    "/admin/**",
+    "/api/admin/**"
+)
+.hasRole("ADMIN")
+```
+
+Por tanto, todos los endpoints que acabamos de crear quedan automáticamente dentro de la zona protegida.
+
+---
+
+# 25. No añadir `@PreAuthorize`
+
+No necesitamos ahora:
+
+```java
+@PreAuthorize("hasRole('ADMIN')")
+```
+
+Ya existe protección en:
+
+```text
+SecurityConfig
+```
+
+Añadir además seguridad por método introduciría otra configuración y otro concepto sin aportar nada al MVP.
+
+Mantendremos una sola fuente de autorización.
+
+---
+
+# 26. Paso 6 — Crear `AdminControllerTest`
+
+Ruta:
+
+```text
+src/test/java/nc/admitionum/controller/AdminControllerTest.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.controller;
+
+import static org.mockito.BDDMockito.given;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.time.LocalDateTime;
+import java.util.List;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import nc.admitionum.config.SecurityConfig;
+import nc.admitionum.dto.admin.AdminDashboardResponse;
+import nc.admitionum.dto.admin.AdminRsvpResponse;
+import nc.admitionum.service.AdminService;
+
+@WebMvcTest(AdminController.class)
+@Import(SecurityConfig.class)
+@ActiveProfiles("test")
+class AdminControllerTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @MockitoBean
+    private AdminService adminService;
+
+    @Test
+    void dashboardShouldRequireAuthentication()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/api/admin/dashboard")
+        )
+            .andExpect(
+                status().is3xxRedirection()
+            )
+            .andExpect(
+                redirectedUrl("/login")
+            );
+    }
+
+    @Test
+    void responsesShouldRequireAuthentication()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/api/admin/responses")
+        )
+            .andExpect(
+                status().is3xxRedirection()
+            )
+            .andExpect(
+                redirectedUrl("/login")
+            );
+    }
+
+    @Test
+    void adminShouldAccessDashboard()
+            throws Exception {
+
+        AdminDashboardResponse response =
+            new AdminDashboardResponse(
+                4,
+                3,
+                1,
+                2,
+                1,
+                4,
+                1
+            );
+
+        given(
+            adminService.getDashboard()
+        ).willReturn(response);
+
+        mockMvc.perform(
+            get("/api/admin/dashboard")
+                .with(
+                    user("test-admin")
+                        .roles("ADMIN")
+                )
+        )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath(
+                    "$.totalInvitations"
+                ).value(4)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.answeredInvitations"
+                ).value(3)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.pendingInvitations"
+                ).value(1)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.confirmedInvitations"
+                ).value(2)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.declinedInvitations"
+                ).value(1)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.confirmedAttendees"
+                ).value(4)
+            )
+            .andExpect(
+                jsonPath(
+                    "$.responsesWithIntolerances"
+                ).value(1)
+            );
+    }
+
+    @Test
+    void adminShouldAccessResponses()
+            throws Exception {
+
+        AdminRsvpResponse response =
+            new AdminRsvpResponse(
+                1,
+                "Familia García",
+                4,
+                "CONFIRMED",
+                "Ana García",
+                "ana@example.com",
+                3,
+                "Intolerancia a la lactosa",
+                "Llegaremos el viernes",
+                LocalDateTime.of(
+                    2026,
+                    8,
+                    11,
+                    15,
+                    30
+                )
+            );
+
+        given(
+            adminService.getResponses()
+        ).willReturn(
+            List.of(response)
+        );
+
+        mockMvc.perform(
+            get("/api/admin/responses")
+                .with(
+                    user("test-admin")
+                        .roles("ADMIN")
+                )
+        )
+            .andExpect(status().isOk())
+            .andExpect(
+                jsonPath("$[0].invitationId")
+                    .value(1)
+            )
+            .andExpect(
+                jsonPath("$[0].displayName")
+                    .value("Familia García")
+            )
+            .andExpect(
+                jsonPath("$[0].status")
+                    .value("CONFIRMED")
+            )
+            .andExpect(
+                jsonPath("$[0].guestName")
+                    .value("Ana García")
+            )
+            .andExpect(
+                jsonPath("$[0].attendeeCount")
+                    .value(3)
+            );
+    }
+
+    @Test
+    void nonAdminShouldBeForbidden()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/api/admin/dashboard")
+                .with(
+                    user("normal-user")
+                        .roles("USER")
+                )
+        )
+            .andExpect(
+                status().isForbidden()
+            );
+    }
+}
+```
+
+---
+
+# 27. Qué comprobamos con este test
+
+Tenemos tres niveles distintos.
+
+### Anónimo
+
+```text
+GET /api/admin/dashboard
+          ↓
+      sin sesión
+          ↓
+      /login
+```
+
+### Usuario con `ROLE_ADMIN`
+
+```text
+GET /api/admin/dashboard
+          ↓
+       ADMIN
+          ↓
+       200 OK
+```
+
+### Usuario sin `ROLE_ADMIN`
+
+```text
+GET /api/admin/dashboard
+          ↓
+        USER
+          ↓
+      403 Forbidden
+```
+
+Es decir, no comprobamos únicamente que el JSON sea correcto.
+
+Comprobamos también que **la API real de la Fase 12 está protegida por la seguridad implementada en la Fase 11**.
+
+---
+
+# 28. Ejecutar `AdminControllerTest`
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=AdminControllerTest" test
+```
+
+## Git Bash
+
+```bash
+./mvnw -Dtest=AdminControllerTest test
+```
+
+Esperado:
+
+```text
+Tests run: 5
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+---
+
+# 29. Paso 7 — Ejecutar toda la batería
+
+Detén Spring Boot si estuviera abierto:
+
+```text
+Ctrl + C
+```
+
+Después:
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+## Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Ahora deben continuar funcionando todas las fases anteriores, incluida:
+
+```text
+SecurityConfigTest
+```
+
+y añadirse:
+
+```text
+AdminServiceTest
+AdminControllerTest
+```
+
+Resultado necesario:
+
+```text
+Failures: 0
+Errors: 0
+BUILD SUCCESS
+```
+
+No des por terminada la Fase 12 si esta prueba falla.
+
+---
+
+# 30. Paso 8 — Prueba manual
+
+La configuración local actual obtiene las credenciales administrativas de:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+y no las almacena directamente en el repositorio.
+
+Si abres una terminal nueva, vuelve a establecerlas.
+
+## PowerShell
+
+```powershell
+$env:ADMIN_USERNAME="tu-usuario"
+$env:ADMIN_PASSWORD="tu-password"
+```
+
+No copies esos valores al código ni al registro de trazabilidad.
+
+Después:
+
+```powershell
+.\mvnw.cmd spring-boot:run
+```
+
+## Git Bash
+
+```bash
+export ADMIN_USERNAME="tu-usuario"
+export ADMIN_PASSWORD="tu-password"
+
+./mvnw spring-boot:run
+```
+
+---
+
+# 31. Prueba anónima
+
+Sin iniciar sesión abre:
+
+```text
+http://localhost:8080/api/admin/dashboard
+```
+
+Debe enviarte a:
+
+```text
+http://localhost:8080/login
+```
+
+Esto confirma que el endpoint nuevo está realmente protegido.
+
+---
+
+# 32. Iniciar sesión
+
+Desde:
+
+```text
+http://localhost:8080/login
+```
+
+introduce las credenciales definidas en:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+Después abre:
+
+```text
+http://localhost:8080/api/admin/dashboard
+```
+
+Ya no debe redirigirte.
+
+Debe aparecer un JSON similar a:
+
+```json
+{
+  "totalInvitations": 3,
+  "answeredInvitations": 1,
+  "pendingInvitations": 2,
+  "confirmedInvitations": 1,
+  "declinedInvitations": 0,
+  "confirmedAttendees": 3,
+  "responsesWithIntolerances": 1
+}
+```
+
+Los números reales dependerán de los datos de tu H2.
+
+---
+
+# 33. Consultar la lista administrativa
+
+Después de iniciar sesión:
+
+```text
+http://localhost:8080/api/admin/responses
+```
+
+Podrías obtener:
+
+```json
+[
+  {
+    "invitationId": 1,
+    "displayName": "Familia García",
+    "maxGuests": 4,
+    "status": "CONFIRMED",
+    "guestName": "Ana García",
+    "contact": "ana@example.com",
+    "attendeeCount": 3,
+    "intolerances": "Lactosa",
+    "additionalComment": "",
+    "updatedAt": "2026-08-11T15:45:10.123"
+  },
+  {
+    "invitationId": 2,
+    "displayName": "María López",
+    "maxGuests": 1,
+    "status": "PENDING",
+    "guestName": null,
+    "contact": null,
+    "attendeeCount": null,
+    "intolerances": null,
+    "additionalComment": null,
+    "updatedAt": null
+  }
+]
+```
+
+Todavía no debe verse como una tabla bonita.
+
+**Eso será correcto.**
+
+En la Fase 12 estamos construyendo la API.
+
+La tabla pertenece a la Fase 13.
+
+---
+
+# 34. Comprobación con H2
+
+Puedes comparar el dashboard con la base real.
+
+Abre:
+
+```text
+http://localhost:8080/h2-console
+```
+
+La configuración local ya dispone de una cadena de seguridad específica para permitir el acceso a H2 únicamente con el perfil `local`.
+
+Consulta total de invitaciones:
+
+```sql
+SELECT COUNT(*) AS TOTAL
+FROM INVITATIONS;
+```
+
+Respuestas:
+
+```sql
+SELECT COUNT(*) AS ANSWERED
+FROM RSVPRESPONSES;
+```
+
+Confirmaciones:
+
+```sql
+SELECT COUNT(*) AS CONFIRMED
+FROM RSVPRESPONSES
+WHERE ATTENDANCECONFIRMED = TRUE;
+```
+
+Rechazos:
+
+```sql
+SELECT COUNT(*) AS DECLINED
+FROM RSVPRESPONSES
+WHERE ATTENDANCECONFIRMED = FALSE;
+```
+
+Asistentes:
+
+```sql
+SELECT COALESCE(
+    SUM(ATTENDEECOUNT),
+    0
+) AS CONFIRMED_ATTENDEES
+FROM RSVPRESPONSES
+WHERE ATTENDANCECONFIRMED = TRUE;
+```
+
+Intolerancias de asistentes:
+
+```sql
+SELECT COUNT(*) AS WITH_INTOLERANCES
+FROM RSVPRESPONSES
+WHERE ATTENDANCECONFIRMED = TRUE
+  AND INTOLERANCES IS NOT NULL
+  AND TRIM(INTOLERANCES) <> '';
+```
+
+Los resultados deberían corresponder con los valores del dashboard.
+
+---
+
+# 35. No necesitas modificar H2
+
+Esta fase:
+
+```text
+No añade tablas.
+No añade columnas.
+No cambia restricciones.
+```
+
+Por tanto:
+
+**no borres `admitionum.mv.db`.**
+
+No modifiques tampoco:
+
+```properties
+spring.jpa.hibernate.ddl-auto=update
+```
+
+Azure SQL sigue perteneciendo a la Fase 15.
+
+---
+
+# 36. Resultado estructural de la Fase 12
+
+Producción:
+
+```text
+src/main/java/nc/admitionum/
+├── controller/
+│   ├── HealthController.java
+│   ├── PublicInvitationController.java
+│   └── AdminController.java
+│
+├── dto/
+│   ├── publicapi/
+│   │   └── ...
+│   │
+│   └── admin/
+│       ├── AdminDashboardResponse.java
+│       └── AdminRsvpResponse.java
+│
+├── service/
+│   ├── InvitationService.java
+│   └── AdminService.java
+│
+├── repository/
+│   ├── InvitationRepository.java
+│   └── RsvpResponseRepository.java
+│
+└── config/
+    ├── SecurityConfig.java
+    └── LocalSecurityConfig.java
+```
+
+Pruebas nuevas:
+
+```text
+src/test/java/nc/admitionum/
+├── controller/
+│   └── AdminControllerTest.java
+│
+└── service/
+    └── AdminServiceTest.java
+```
+
+---
+
+# 37. Archivos que NO deberían cambiar
+
+Comprueba especialmente:
+
+```text
+pom.xml
+
+src/main/java/nc/admitionum/model/Invitation.java
+src/main/java/nc/admitionum/model/RsvpResponse.java
+
+src/main/java/nc/admitionum/repository/InvitationRepository.java
+src/main/java/nc/admitionum/repository/RsvpResponseRepository.java
+
+src/main/java/nc/admitionum/service/InvitationService.java
+
+src/main/java/nc/admitionum/config/SecurityConfig.java
+src/main/java/nc/admitionum/config/LocalSecurityConfig.java
+
+src/main/resources/static/index.html
+src/main/resources/static/css/styles.css
+src/main/resources/static/js/public-app.js
+```
+
+En particular, **no modifiques `SecurityConfig.java` para añadir los endpoints**.
+
+Ya está protegido todo:
+
+```text
+/api/admin/**
+```
+
+No es necesario enumerar:
+
+```text
+/api/admin/dashboard
+/api/admin/responses
+```
+
+individualmente.
+
+---
+
+# 38. Errores habituales
+
+## Error 302 al abrir el endpoint
+
+Si ves:
+
+```text
+302
+```
+
+y:
+
+```text
+Location: /login
+```
+
+sin haberte autenticado, no es un error.
+
+Es exactamente el comportamiento esperado.
+
+---
+
+## Error 403 teniendo sesión
+
+Comprueba que el usuario real se haya creado con:
+
+```java
+.roles("ADMIN")
+```
+
+El `SecurityConfig` actual lo hace.
+
+También comprueba que no estés utilizando una sesión antigua.
+
+Cierra sesión y vuelve a entrar.
+
+---
+
+## `AdminService cannot be resolved`
+
+Comprueba:
+
+```text
+src/main/java/nc/admitionum/service/AdminService.java
+```
+
+y:
+
+```java
+package nc.admitionum.service;
+```
+
+---
+
+## `AdminDashboardResponse cannot be resolved`
+
+Debe encontrarse en:
+
+```text
+src/main/java/nc/admitionum/dto/admin/
+```
+
+y usar:
+
+```java
+package nc.admitionum.dto.admin;
+```
+
+---
+
+## Todos aparecen como `PENDING`
+
+Comprueba primero:
+
+```sql
+SELECT *
+FROM RSVPRESPONSES;
+```
+
+Si está vacía, el comportamiento es correcto.
+
+También comprueba que las respuestas estén relacionadas mediante:
+
+```text
+InvitationId
+```
+
+---
+
+## Las invitaciones pendientes no aparecen
+
+Eso normalmente significaría que estás construyendo la lista desde:
+
+```java
+rsvpResponseRepository.findAll()
+```
+
+No debe hacerse así.
+
+La lista principal debe proceder de:
+
+```java
+invitationRepository.findAll()
+```
+
+---
+
+## Una invitación respondida aparece como `EXPIRED`
+
+Con el código propuesto no debe suceder.
+
+Primero se comprueba:
+
+```java
+if (response != null)
+```
+
+y solo cuando no existe respuesta se comprueba la expiración.
+
+---
+
+## `responsesWithIntolerances` cuenta cadenas vacías
+
+Comprueba:
+
+```java
+value != null && !value.isBlank()
+```
+
+No utilices solo:
+
+```java
+value != null
+```
+
+---
+
+## Las pruebas administrativas obtienen 401 o 302 en lugar de 200
+
+En los tests de acceso autorizado debe existir:
+
+```java
+.with(
+    user("test-admin")
+        .roles("ADMIN")
+)
+```
+
+---
+
+## `SecurityConfigTest` vuelve a fallar
+
+No cambies:
+
+```java
+redirectedUrl("/login")
+```
+
+por:
+
+```java
+redirectedUrlPattern("**/login")
+```
+
+La Fase 11.1 ya corrigió precisamente esa incidencia.
+
+---
+
+# 39. Revisión de Git
+
+Después de superar todas las pruebas:
+
+```bash
+git status
+```
+
+Idealmente solo deberían aparecer:
+
+```text
+src/main/java/nc/admitionum/controller/AdminController.java
+src/main/java/nc/admitionum/dto/admin/AdminDashboardResponse.java
+src/main/java/nc/admitionum/dto/admin/AdminRsvpResponse.java
+src/main/java/nc/admitionum/service/AdminService.java
+
+src/test/java/nc/admitionum/controller/AdminControllerTest.java
+src/test/java/nc/admitionum/service/AdminServiceTest.java
+```
+
+Comprueba:
+
+```bash
+git diff
+```
+
+No incluyas:
+
+```text
+data/
+target/
+*.mv.db
+*.trace.db
+```
+
+---
+
+# 40. Commits recomendados
+
+Podemos mantener dos commits.
+
+## Backend
+
+```bash
+git add src/main/java/nc/admitionum/dto/admin
+git add src/main/java/nc/admitionum/service/AdminService.java
+git add src/main/java/nc/admitionum/controller/AdminController.java
+
+git commit -m "feat: add administrative API"
+```
+
+## Pruebas
+
+```bash
+git add src/test/java/nc/admitionum/service/AdminServiceTest.java
+git add src/test/java/nc/admitionum/controller/AdminControllerTest.java
+
+git commit -m "test: verify administrative API"
+```
+
+Subir rama:
+
+```bash
+git push -u origin Phase12
+```
+
+Después crea el pull request hacia:
+
+```text
+main
+```
+
+---
+
+# 41. Criterios de finalización de la Fase 12
+
+La fase estará cerrada cuando:
+
+```text
+[ ] Fase 11 figura como completada.
+[ ] Fase 11.1 figura como completada.
+[ ] La rama parte de main actualizado.
+
+[ ] Existe dto/admin.
+[ ] Existe AdminDashboardResponse.
+[ ] Existe AdminRsvpResponse.
+[ ] No se devuelven entidades JPA directamente.
+
+[ ] Existe AdminService.
+[ ] AdminService utiliza InvitationRepository.
+[ ] AdminService utiliza RsvpResponseRepository.
+[ ] Los repositorios no se han modificado.
+[ ] El servicio es readOnly.
+
+[ ] Se calculan las invitaciones totales.
+[ ] Se calculan las invitaciones respondidas.
+[ ] Se calculan las pendientes.
+[ ] Se calculan las confirmadas.
+[ ] Se calculan las rechazadas.
+[ ] Se suman asistentes confirmados.
+[ ] Se cuentan respuestas confirmadas con intolerancias.
+
+[ ] Se generan estados:
+    CONFIRMED.
+    DECLINED.
+    PENDING.
+    DISABLED.
+    EXPIRED.
+
+[ ] Las invitaciones pendientes aparecen en la lista.
+[ ] Los campos de respuesta de una pendiente son null.
+[ ] La lista se ordena por DisplayName.
+
+[ ] Existe AdminController.
+[ ] Existe GET /api/admin/dashboard.
+[ ] Existe GET /api/admin/responses.
+
+[ ] Un anónimo es redirigido a /login.
+[ ] ROLE_ADMIN puede acceder.
+[ ] Un usuario sin ROLE_ADMIN recibe 403.
+
+[ ] AdminServiceTest funciona.
+[ ] AdminControllerTest funciona.
+[ ] SecurityConfigTest continúa funcionando.
+[ ] Todas las pruebas anteriores continúan funcionando.
+[ ] mvnw clean test devuelve BUILD SUCCESS.
+
+[ ] No existe todavía /admin/index.html.
+[ ] No existe todavía admin-app.js.
+[ ] No se han implementado filtros visuales.
+[ ] No se ha implementado CSV.
+[ ] No se ha modificado Azure SQL.
+[ ] No se ha creado Docker.
+[ ] No se ha creado GitHub Actions.
+
+[ ] Se han creado commits claros.
+[ ] La rama Phase12 se ha subido.
+[ ] La fase se ha integrado en main.
+```
+
+---
+
+# 42. Texto para el registro de trazabilidad
+
+Cuando hayas verificado realmente todo lo anterior, puedes incorporar:
+
+```text
+Fase 12 — Creación de la API administrativa
+
+Estado: completada.
+
+Objetivo:
+Crear el backend administrativo de solo lectura de Admitionum,
+aprovechando la autenticación y autorización implementadas
+en la Fase 11.
+
+Endpoints:
+- GET /api/admin/dashboard
+- GET /api/admin/responses
+
+Seguridad:
+- /api/admin/** continúa protegido mediante ROLE_ADMIN.
+- Las peticiones anónimas son redirigidas a /login.
+- Los usuarios sin ROLE_ADMIN reciben HTTP 403.
+- No se ha modificado SecurityConfig.
+
+Archivos nuevos:
+- src/main/java/nc/admitionum/dto/admin/
+  AdminDashboardResponse.java
+- src/main/java/nc/admitionum/dto/admin/
+  AdminRsvpResponse.java
+- src/main/java/nc/admitionum/service/
+  AdminService.java
+- src/main/java/nc/admitionum/controller/
+  AdminController.java
+- src/test/java/nc/admitionum/service/
+  AdminServiceTest.java
+- src/test/java/nc/admitionum/controller/
+  AdminControllerTest.java
+
+Dashboard:
+- totalInvitations.
+- answeredInvitations.
+- pendingInvitations.
+- confirmedInvitations.
+- declinedInvitations.
+- confirmedAttendees.
+- responsesWithIntolerances.
+
+Lista administrativa:
+- invitationId.
+- displayName.
+- maxGuests.
+- status.
+- guestName.
+- contact.
+- attendeeCount.
+- intolerances.
+- additionalComment.
+- updatedAt.
+
+Estados:
+- CONFIRMED.
+- DECLINED.
+- PENDING.
+- DISABLED.
+- EXPIRED.
+
+Comportamiento:
+- Las respuestas CONFIRMED y DECLINED se calculan desde
+  AttendanceConfirmed.
+- Una invitación sin respuesta y activa/no expirada se
+  considera PENDING.
+- Una invitación sin respuesta y desactivada se considera
+  DISABLED.
+- Una invitación sin respuesta y expirada se considera
+  EXPIRED.
+- Las invitaciones sin respuesta también se incluyen en
+  GET /api/admin/responses.
+- Sus campos específicos de respuesta se devuelven como null.
+- La lista se ordena por DisplayName.
+- responsesWithIntolerances cuenta respuestas confirmadas
+  cuyo campo Intolerances contiene texto.
+
+Persistencia:
+- No se han creado tablas nuevas.
+- No se han modificado entidades.
+- No se han modificado repositorios.
+- Se utilizan findAll() heredados de JpaRepository.
+- AdminService utiliza transacciones readOnly.
+
+Pruebas:
+- AdminServiceTest comprueba estadísticas y estados.
+- AdminControllerTest comprueba JSON y seguridad.
+- Acceso anónimo: redirección a /login.
+- ROLE_ADMIN: HTTP 200.
+- ROLE_USER: HTTP 403.
+- SecurityConfigTest continúa funcionando.
+- mvnw clean test finaliza con BUILD SUCCESS.
+
+Elementos no desarrollados:
+- Panel administrativo HTML.
+- admin-app.js.
+- Filtros visuales.
+- Exportación CSV.
+- Azure SQL.
+- Docker.
+- Azure Container Apps.
+- GitHub Actions.
+
+Commits:
+- feat: add administrative API
+- test: verify administrative API
+
+Siguiente fase:
+- Fase 13 — Crear panel administrativo v1.1.
+```
+
+Con esto la Fase 12 queda estrictamente limitada al **backend administrativo**. El siguiente salto será muy claro: en la Fase 13 no tendremos que tocar la persistencia ni diseñar otra API; construiremos el HTML/JavaScript que consuma estos dos endpoints.
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 13 pendiente
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
