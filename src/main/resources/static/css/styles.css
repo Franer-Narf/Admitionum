@@ -350,6 +350,32 @@ button:disabled {
     margin: 0;
 }
 
+.admin-export-actions {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 18px;
+}
+
+.admin-export-link {
+    display: inline-block;
+    padding: 10px 14px;
+    background-color: #222222;
+    border: 1px solid #222222;
+    border-radius: 6px;
+    color: #ffffff;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.admin-export-link:hover {
+    background-color: #444444;
+}
+
+.admin-export-link:focus {
+    outline: 2px solid #222222;
+    outline-offset: 3px;
+}
+
 .table-wrapper {
     width: 100%;
     overflow-x: auto;
@@ -452,5 +478,10 @@ button:disabled {
 
     .admin-section-header {
         display: block;
+    }
+
+    .admin-export-link {
+        width: 100%;
+        text-align: center;
     }
 }
