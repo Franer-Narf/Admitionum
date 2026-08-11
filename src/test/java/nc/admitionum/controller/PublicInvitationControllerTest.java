@@ -11,6 +11,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.mockito.Mockito.verifyNoInteractions;
 
 import java.time.LocalDateTime;
 
@@ -22,6 +23,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.context.ActiveProfiles;
 
 import nc.admitionum.dto.publicapi.ExistingRsvpResponse;
 import nc.admitionum.dto.publicapi.InvitationPublicResponse;
@@ -32,13 +34,15 @@ import nc.admitionum.exception.InvitationDisabledException;
 import nc.admitionum.exception.InvitationExpiredException;
 import nc.admitionum.exception.InvitationNotFoundException;
 import nc.admitionum.service.InvitationService;
-
-import static org.mockito.Mockito.verifyNoInteractions;
-
 import nc.admitionum.exception.InvalidAttendeeCountException;
+import nc.admitionum.config.SecurityConfig;
 
 @WebMvcTest(PublicInvitationController.class)
-@Import(GlobalExceptionHandler.class)
+@Import({
+    GlobalExceptionHandler.class,
+    SecurityConfig.class
+})
+@ActiveProfiles("test")
 class PublicInvitationControllerTest {
 
     @Autowired
