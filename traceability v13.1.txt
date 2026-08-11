@@ -138,11 +138,11 @@ Forma de ayudarme:
 
 Estado actual completado:
 
-Fase 12
+Fase 13.1
 
 Fase que quiero desarrollar:
 
-Fase 13
+Fase 14
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
@@ -28031,6 +28031,3557 @@ Con esto la Fase 12 queda estrictamente limitada al **backend administrativo**. 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
 Fase 13 pendiente
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+# Fase 13 — Crear panel administrativo v1.1
+
+He revisado el registro de trazabilidad v12 y el estado actual de `main`. El orden obligatorio sitúa **Fase 13 — Crear panel administrativo v1.1** inmediatamente después de la API administrativa de la Fase 12, y el propio registro deja como siguiente fase exactamente esa. 
+
+Además, `main` contiene ya los dos endpoints que necesitamos:
+
+```http
+GET /api/admin/dashboard
+GET /api/admin/responses
+```
+
+`AdminController` expone exactamente esas dos rutas.  `AdminService` ya calcula las estadísticas, incluye las invitaciones sin respuesta, genera los estados `CONFIRMED`, `DECLINED`, `PENDING`, `DISABLED` y `EXPIRED`, y ordena la lista por `DisplayName`.
+
+Por tanto, **la Fase 13 es la siguiente fase correcta**.
+
+---
+
+# 1. Estado del proyecto
+
+El orden queda:
+
+```text
+Fase 1    — Spring Boot: completada.
+Fase 2    — API de prueba: completada.
+Fase 3    — Invitation: completada.
+Fase 4    — Consulta pública: completada.
+Fase 5    — RsvpResponse: completada.
+Fase 6    — SaveRsvpRequest: completada.
+Fase 7    — Guardar/actualizar respuesta: completada.
+Fase 8    — Validaciones: completada.
+Fase 9    — HTML/CSS público: completada.
+Fase 10   — JavaScript público: completada.
+Fase 10.1 — Límite de asistentes: completada.
+Fase 11   — Spring Security: completada.
+Fase 11.1 — Corrección de seguridad: completada.
+Fase 12   — API administrativa: completada.
+Fase 13   — Panel administrativo v1.1: fase actual.
+```
+
+No hay que crear otra API ni modificar la persistencia.
+
+---
+
+# 2. Alcance exacto de la Fase 13
+
+En esta fase vamos a construir exclusivamente la interfaz administrativa.
+
+Al terminar tendremos:
+
+```text
+/admin/
+    ↓
+Panel administrativo protegido
+    ↓
+GET /api/admin/dashboard
+GET /api/admin/responses
+```
+
+El panel permitirá:
+
+* Ver cuatro métricas principales.
+* Consultar todas las invitaciones.
+* Ver confirmadas, rechazadas y pendientes.
+* Ver invitaciones desactivadas y expiradas.
+* Buscar por invitación, nombre o contacto.
+* Filtrar por estado.
+* Filtrar las respuestas que tengan intolerancias.
+* Consultar:
+
+  * Invitación.
+  * Nombre del invitado.
+  * Contacto.
+  * Estado.
+  * Número de asistentes.
+  * Intolerancias.
+  * Comentario adicional.
+  * Última actualización.
+* Cerrar la sesión utilizando Spring Security.
+
+Los filtros serán **completamente JavaScript sobre la lista ya descargada**.
+
+No modificaremos los endpoints para aceptar parámetros.
+
+---
+
+# 3. Contradicciones y aclaraciones
+
+## 3.1. CSV no pertenece todavía a esta fase
+
+En el diseño general del panel aparecía un botón de exportación, pero el orden obligatorio establece:
+
+```text
+Fase 13 — Panel administrativo.
+Fase 14 — Exportación CSV.
+```
+
+Por tanto, durante la Fase 13:
+
+```text
+NO habrá botón Exportar CSV.
+NO habrá endpoint CSV.
+NO habrá CsvExportService.
+```
+
+Lo incorporaremos en la Fase 14.
+
+---
+
+## 3.2. No añadiremos `submittedAt`
+
+El DTO administrativo actual contiene:
+
+```text
+invitationId
+displayName
+maxGuests
+status
+guestName
+contact
+attendeeCount
+intolerances
+additionalComment
+updatedAt
+```
+
+No contiene `submittedAt`.
+
+Por tanto, la tabla mostrará:
+
+```text
+Última actualización
+```
+
+y no añadiremos todavía:
+
+```text
+Fecha de envío
+```
+
+No modificaremos el DTO de la Fase 12.
+
+---
+
+## 3.3. Las cuatro tarjetas del dashboard
+
+Aunque el backend devuelve siete métricas, el Documento Maestro define cuatro tarjetas principales.
+
+Mostraremos:
+
+```text
+Invitaciones totales
+Pendientes
+Asistentes confirmados
+Respuestas con intolerancias
+```
+
+El backend ya proporciona esos valores.
+
+Los otros valores seguirán existiendo en la API, pero no necesitamos visualizarlos todavía.
+
+---
+
+## 3.4. `admin-app.js` podrá descargarse públicamente
+
+La configuración actual permite:
+
+```text
+/css/**
+/js/**
+```
+
+sin autenticación, mientras protege:
+
+```text
+/admin/**
+/api/admin/**
+```
+
+con `ROLE_ADMIN`.
+
+No modificaremos esta configuración.
+
+Que alguien pueda leer `admin-app.js` **no da acceso a los datos**: los datos continúan detrás de `/api/admin/**`, que es la barrera de seguridad real.
+
+El JavaScript no contendrá:
+
+```text
+Contraseñas
+Credenciales
+Secretos
+Datos SQL
+```
+
+---
+
+# 4. Pequeña incorporación necesaria: ruta `/admin/`
+
+El Documento Maestro quiere que el administrador entre mediante:
+
+```text
+/admin/
+```
+
+El archivo físico será:
+
+```text
+src/main/resources/static/admin/index.html
+```
+
+Spring Boot documenta el soporte automático de `index.html` como página de bienvenida de la raíz de la aplicación, pero no conviene depender de que un `index.html` situado en un subdirectorio se resuelva automáticamente como `/admin/`. ([Home][1])
+
+Para respetar exactamente nuestra URL:
+
+```text
+/admin/
+```
+
+añadiremos un controlador extremadamente pequeño:
+
+```text
+AdminPageController
+```
+
+que únicamente hará:
+
+```text
+/admin/
+    ↓
+forward
+    ↓
+/admin/index.html
+```
+
+No crea una API nueva.
+
+No modifica la arquitectura.
+
+No añade Thymeleaf.
+
+---
+
+# 5. Archivos de la Fase 13
+
+## Nuevos
+
+```text
+src/main/java/nc/admitionum/controller/
+└── AdminPageController.java
+
+src/main/resources/static/
+├── admin/
+│   └── index.html
+└── js/
+    └── admin-app.js
+
+src/test/java/nc/admitionum/controller/
+└── AdminPageTest.java
+```
+
+## Modificado
+
+```text
+src/main/resources/static/css/styles.css
+```
+
+Solo añadiremos estilos administrativos al final.
+
+---
+
+# 6. Archivos que NO modificaremos
+
+No debemos tocar:
+
+```text
+AdminController.java
+AdminService.java
+AdminDashboardResponse.java
+AdminRsvpResponse.java
+
+Invitation.java
+RsvpResponse.java
+
+InvitationRepository.java
+RsvpResponseRepository.java
+
+InvitationService.java
+PublicInvitationController.java
+
+SecurityConfig.java
+LocalSecurityConfig.java
+
+application.properties
+application-local.properties
+
+pom.xml
+```
+
+La Fase 12 ya proporciona todos los datos necesarios.
+
+---
+
+# 7. Paso 0 — Preparar la rama
+
+Desde:
+
+```text
+C:\Users\proto\Proyectos\admitionum
+```
+
+o la ubicación real de tu repositorio.
+
+Comprueba:
+
+```bash
+git status
+```
+
+Después:
+
+```bash
+git switch main
+git pull
+git switch -c Phase13
+```
+
+Si ya existe:
+
+```bash
+git switch Phase13
+```
+
+## Prueba inicial
+
+### PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+### Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Debes comenzar con:
+
+```text
+BUILD SUCCESS
+```
+
+Si falla antes de introducir cambios, no continúes con la Fase 13.
+
+---
+
+# 8. Paso 1 — Crear `AdminPageController`
+
+Ruta:
+
+```text
+src/main/java/nc/admitionum/controller/AdminPageController.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.controller;
+
+import org.springframework.stereotype.Controller;
+import org.springframework.web.bind.annotation.GetMapping;
+
+@Controller
+public class AdminPageController {
+
+    @GetMapping({
+        "/admin",
+        "/admin/"
+    })
+    public String adminPage() {
+
+        return "forward:/admin/index.html";
+    }
+}
+```
+
+## Qué hace
+
+### `@Controller`
+
+```java
+@Controller
+```
+
+Aquí no usamos:
+
+```java
+@RestController
+```
+
+porque no queremos devolver JSON.
+
+Este controlador dirige al navegador hacia una página HTML.
+
+---
+
+### `@GetMapping`
+
+```java
+@GetMapping({
+    "/admin",
+    "/admin/"
+})
+```
+
+Admite ambas URLs:
+
+```text
+/admin
+/admin/
+```
+
+---
+
+### `forward`
+
+```java
+return "forward:/admin/index.html";
+```
+
+Spring procesa internamente:
+
+```text
+/admin/
+     ↓
+/admin/index.html
+```
+
+El navegador seguirá mostrando:
+
+```text
+/admin/
+```
+
+---
+
+# 9. Prueba rápida del controlador
+
+Todavía no hemos creado `index.html`, así que de momento solo comprueba que compila:
+
+### PowerShell
+
+```powershell
+.\mvnw.cmd "-DskipTests" compile
+```
+
+### Git Bash
+
+```bash
+./mvnw -DskipTests compile
+```
+
+Resultado:
+
+```text
+BUILD SUCCESS
+```
+
+Después continúa.
+
+---
+
+# 10. Paso 2 — Crear la página administrativa
+
+Crea la carpeta:
+
+```text
+src/main/resources/static/admin/
+```
+
+Y dentro:
+
+```text
+src/main/resources/static/admin/index.html
+```
+
+Contenido completo:
+
+```html
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="Panel administrativo de Admitionum"
+    >
+
+    <title>Administración | Admitionum</title>
+
+    <link
+        rel="stylesheet"
+        href="/css/styles.css"
+    >
+
+    <script
+        src="/js/admin-app.js"
+        defer
+    ></script>
+</head>
+
+<body class="admin-body">
+
+    <main class="admin-page-container">
+
+        <header class="admin-header">
+
+            <div>
+                <p class="event-name">
+                    Admitionum
+                </p>
+
+                <h1>
+                    Panel de administración
+                </h1>
+
+                <p class="admin-subtitle">
+                    Consulta las confirmaciones de asistencia.
+                </p>
+            </div>
+
+            <a
+                class="admin-logout-link"
+                href="/logout"
+            >
+                Cerrar sesión
+            </a>
+
+        </header>
+
+        <p
+            id="admin-message"
+            class="admin-message"
+            aria-live="polite"
+        >
+            Cargando información...
+        </p>
+
+        <section
+            class="admin-section"
+            aria-labelledby="summary-title"
+        >
+
+            <h2 id="summary-title">
+                Resumen
+            </h2>
+
+            <div class="summary-grid">
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Invitaciones totales
+                    </p>
+
+                    <p
+                        id="dashboard-total-invitations"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Pendientes
+                    </p>
+
+                    <p
+                        id="dashboard-pending-invitations"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Asistentes confirmados
+                    </p>
+
+                    <p
+                        id="dashboard-confirmed-attendees"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Respuestas con intolerancias
+                    </p>
+
+                    <p
+                        id="dashboard-intolerances"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+            </div>
+
+        </section>
+
+        <section
+            class="admin-section"
+            aria-labelledby="responses-title"
+        >
+
+            <div class="admin-section-header">
+
+                <h2 id="responses-title">
+                    Invitaciones y respuestas
+                </h2>
+
+                <p
+                    id="results-count"
+                    class="results-count"
+                    aria-live="polite"
+                ></p>
+
+            </div>
+
+            <div
+                class="admin-filters"
+                aria-label="Filtros de respuestas"
+            >
+
+                <div class="admin-filter">
+
+                    <label for="admin-search">
+                        Buscar
+                    </label>
+
+                    <input
+                        id="admin-search"
+                        type="search"
+                        placeholder="Invitación, nombre o contacto"
+                        autocomplete="off"
+                        disabled
+                    >
+
+                </div>
+
+                <div class="admin-filter">
+
+                    <label for="status-filter">
+                        Estado
+                    </label>
+
+                    <select
+                        id="status-filter"
+                        disabled
+                    >
+                        <option value="ALL">
+                            Todos
+                        </option>
+
+                        <option value="CONFIRMED">
+                            Confirmadas
+                        </option>
+
+                        <option value="DECLINED">
+                            Rechazadas
+                        </option>
+
+                        <option value="PENDING">
+                            Pendientes
+                        </option>
+
+                        <option value="DISABLED">
+                            Desactivadas
+                        </option>
+
+                        <option value="EXPIRED">
+                            Expiradas
+                        </option>
+                    </select>
+
+                </div>
+
+                <label class="checkbox-filter">
+
+                    <input
+                        id="intolerances-filter"
+                        type="checkbox"
+                        disabled
+                    >
+
+                    Solo con intolerancias
+
+                </label>
+
+            </div>
+
+            <div class="table-wrapper">
+
+                <table class="admin-table">
+
+                    <caption class="visually-hidden">
+                        Lista de invitaciones y respuestas
+                    </caption>
+
+                    <thead>
+                        <tr>
+                            <th scope="col">
+                                Invitación
+                            </th>
+
+                            <th scope="col">
+                                Invitado
+                            </th>
+
+                            <th scope="col">
+                                Contacto
+                            </th>
+
+                            <th scope="col">
+                                Estado
+                            </th>
+
+                            <th scope="col">
+                                Asistentes
+                            </th>
+
+                            <th scope="col">
+                                Intolerancias
+                            </th>
+
+                            <th scope="col">
+                                Comentario
+                            </th>
+
+                            <th scope="col">
+                                Última actualización
+                            </th>
+                        </tr>
+                    </thead>
+
+                    <tbody id="responses-table-body">
+
+                        <tr>
+                            <td colspan="8">
+                                Cargando respuestas...
+                            </td>
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </section>
+
+    </main>
+
+</body>
+</html>
+```
+
+---
+
+# 11. Qué representa este HTML
+
+El panel tiene tres bloques:
+
+```text
+Cabecera
+    ↓
+Dashboard
+    ↓
+Filtros + tabla
+```
+
+No contiene datos escritos manualmente.
+
+Todos los valores reales llegarán mediante:
+
+```text
+admin-app.js
+```
+
+---
+
+# 12. Prueba después del HTML
+
+Todavía no existe `admin-app.js`, así que el navegador puede mostrar un error 404 para ese script.
+
+Eso es temporal.
+
+Comprueba únicamente que el archivo existe:
+
+### PowerShell
+
+```powershell
+Test-Path `
+    .\src\main\resources\static\admin\index.html
+```
+
+Resultado:
+
+```text
+True
+```
+
+### Git Bash
+
+```bash
+test -f src/main/resources/static/admin/index.html \
+    && echo "OK"
+```
+
+Resultado:
+
+```text
+OK
+```
+
+---
+
+# 13. Paso 3 — Añadir estilos administrativos
+
+No crearemos otro framework ni otro sistema CSS.
+
+El proyecto ya utiliza:
+
+```text
+src/main/resources/static/css/styles.css
+```
+
+Abre ese archivo y **añade al final**, después del CSS existente:
+
+```css
+/* =========================================================
+   Panel administrativo
+   ========================================================= */
+
+.admin-body {
+    min-width: 320px;
+}
+
+.admin-page-container {
+    width: 100%;
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 32px 20px;
+}
+
+.admin-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 24px;
+}
+
+.admin-header h1 {
+    margin: 0;
+}
+
+.admin-subtitle {
+    margin: 10px 0 0;
+    color: #555555;
+}
+
+.admin-logout-link {
+    flex-shrink: 0;
+    display: inline-block;
+    padding: 10px 14px;
+    border: 1px solid #222222;
+    border-radius: 6px;
+    color: #222222;
+    text-decoration: none;
+    font-weight: bold;
+}
+
+.admin-logout-link:hover {
+    background-color: #eeeeee;
+}
+
+.admin-logout-link:focus {
+    outline: 2px solid #222222;
+    outline-offset: 3px;
+}
+
+.admin-message {
+    min-height: 24px;
+    margin: 0 0 24px;
+}
+
+.admin-message--error {
+    font-weight: bold;
+}
+
+.admin-section {
+    margin-bottom: 32px;
+}
+
+.admin-section h2 {
+    margin: 0 0 18px;
+}
+
+.summary-grid {
+    display: grid;
+    grid-template-columns:
+        repeat(
+            auto-fit,
+            minmax(190px, 1fr)
+        );
+    gap: 16px;
+}
+
+.summary-card {
+    padding: 20px;
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+    border-radius: 10px;
+}
+
+.summary-label {
+    margin: 0;
+    color: #555555;
+}
+
+.summary-value {
+    margin: 10px 0 0;
+    font-size: 2rem;
+    font-weight: bold;
+}
+
+.admin-section-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.results-count {
+    margin: 0 0 18px;
+    color: #555555;
+}
+
+.admin-filters {
+    display: grid;
+    grid-template-columns:
+        minmax(220px, 2fr)
+        minmax(180px, 1fr)
+        auto;
+    align-items: end;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.admin-filter label {
+    margin-bottom: 8px;
+}
+
+.admin-filter input[type="search"],
+.admin-filter select {
+    width: 100%;
+    padding: 11px;
+    background-color: #ffffff;
+    border: 1px solid #aaaaaa;
+    border-radius: 6px;
+}
+
+.admin-filter input[type="search"]:focus,
+.admin-filter select:focus {
+    outline: 2px solid #222222;
+    outline-offset: 2px;
+}
+
+.checkbox-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 42px;
+    margin: 0;
+    font-weight: normal;
+}
+
+.checkbox-filter input {
+    margin: 0;
+}
+
+.table-wrapper {
+    width: 100%;
+    overflow-x: auto;
+    background-color: #ffffff;
+    border: 1px solid #dddddd;
+    border-radius: 10px;
+}
+
+.admin-table {
+    width: 100%;
+    min-width: 1100px;
+    border-collapse: collapse;
+}
+
+.admin-table th,
+.admin-table td {
+    padding: 12px 14px;
+    border-bottom: 1px solid #e5e5e5;
+    text-align: left;
+    vertical-align: top;
+}
+
+.admin-table th {
+    background-color: #f3f3f3;
+    font-size: 0.9rem;
+}
+
+.admin-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.admin-table__long-text {
+    max-width: 260px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    white-space: nowrap;
+}
+
+.status-badge--confirmed {
+    background-color: #e8f5e9;
+}
+
+.status-badge--declined {
+    background-color: #fdeaea;
+}
+
+.status-badge--pending {
+    background-color: #fff4d6;
+}
+
+.status-badge--disabled {
+    background-color: #eeeeee;
+}
+
+.status-badge--expired {
+    background-color: #eeeeee;
+}
+
+.status-badge--unknown {
+    background-color: #eeeeee;
+}
+
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+@media (max-width: 800px) {
+
+    .admin-page-container {
+        padding: 20px 12px;
+    }
+
+    .admin-header {
+        flex-direction: column;
+    }
+
+    .admin-filters {
+        grid-template-columns: 1fr;
+    }
+
+    .checkbox-filter {
+        min-height: auto;
+    }
+
+    .admin-section-header {
+        display: block;
+    }
+}
+```
+
+---
+
+# 14. Por qué permitimos desplazamiento horizontal
+
+La tabla tiene ocho columnas.
+
+En móvil, intentar reducir todas las columnas hasta hacerlas caber produciría textos prácticamente ilegibles.
+
+Por eso:
+
+```css
+overflow-x: auto;
+```
+
+permite deslizar lateralmente únicamente la tabla.
+
+El resto de la página sigue adaptándose al ancho disponible.
+
+---
+
+# 15. Paso 4 — Crear `admin-app.js`
+
+Ruta:
+
+```text
+src/main/resources/static/js/admin-app.js
+```
+
+Contenido completo:
+
+```javascript
+"use strict";
+
+
+const totalInvitationsElement =
+    document.querySelector(
+        "#dashboard-total-invitations"
+    );
+
+const pendingInvitationsElement =
+    document.querySelector(
+        "#dashboard-pending-invitations"
+    );
+
+const confirmedAttendeesElement =
+    document.querySelector(
+        "#dashboard-confirmed-attendees"
+    );
+
+const intolerancesElement =
+    document.querySelector(
+        "#dashboard-intolerances"
+    );
+
+const adminMessage =
+    document.querySelector(
+        "#admin-message"
+    );
+
+const searchInput =
+    document.querySelector(
+        "#admin-search"
+    );
+
+const statusFilter =
+    document.querySelector(
+        "#status-filter"
+    );
+
+const intolerancesFilter =
+    document.querySelector(
+        "#intolerances-filter"
+    );
+
+const resultsCount =
+    document.querySelector(
+        "#results-count"
+    );
+
+const responsesTableBody =
+    document.querySelector(
+        "#responses-table-body"
+    );
+
+
+const statusLabels = {
+    CONFIRMED: "Confirmada",
+    DECLINED: "Rechazada",
+    PENDING: "Pendiente",
+    DISABLED: "Desactivada",
+    EXPIRED: "Expirada"
+};
+
+
+const statusClasses = {
+    CONFIRMED: "status-badge--confirmed",
+    DECLINED: "status-badge--declined",
+    PENDING: "status-badge--pending",
+    DISABLED: "status-badge--disabled",
+    EXPIRED: "status-badge--expired"
+};
+
+
+let allResponses = [];
+
+
+function showAdminMessage(
+        message,
+        isError = false) {
+
+    adminMessage.textContent = message;
+
+    adminMessage.classList.toggle(
+        "admin-message--error",
+        isError
+    );
+}
+
+
+function setFiltersDisabled(disabled) {
+
+    searchInput.disabled = disabled;
+    statusFilter.disabled = disabled;
+    intolerancesFilter.disabled = disabled;
+}
+
+
+function setMetric(element, value) {
+
+    const numericValue =
+        Number(value);
+
+    if (!Number.isFinite(numericValue)) {
+
+        element.textContent = "—";
+        return;
+    }
+
+    element.textContent =
+        String(numericValue);
+}
+
+
+function fillDashboard(data) {
+
+    setMetric(
+        totalInvitationsElement,
+        data.totalInvitations
+    );
+
+    setMetric(
+        pendingInvitationsElement,
+        data.pendingInvitations
+    );
+
+    setMetric(
+        confirmedAttendeesElement,
+        data.confirmedAttendees
+    );
+
+    setMetric(
+        intolerancesElement,
+        data.responsesWithIntolerances
+    );
+}
+
+
+function normalizeText(value) {
+
+    if (value === null
+            || value === undefined) {
+
+        return "";
+    }
+
+    return String(value)
+        .normalize("NFD")
+        .replace(
+            /[\u0300-\u036f]/g,
+            ""
+        )
+        .toLowerCase()
+        .trim();
+}
+
+
+function hasIntolerances(response) {
+
+    return (
+        typeof response.intolerances
+            === "string"
+        && response.intolerances.trim()
+            !== ""
+    );
+}
+
+
+function getFilteredResponses() {
+
+    const search =
+        normalizeText(
+            searchInput.value
+        );
+
+    const selectedStatus =
+        statusFilter.value;
+
+    const onlyWithIntolerances =
+        intolerancesFilter.checked;
+
+
+    return allResponses.filter(
+        (response) => {
+
+            const matchesSearch =
+                search === ""
+                || normalizeText(
+                    response.displayName
+                ).includes(search)
+                || normalizeText(
+                    response.guestName
+                ).includes(search)
+                || normalizeText(
+                    response.contact
+                ).includes(search);
+
+
+            const matchesStatus =
+                selectedStatus === "ALL"
+                || response.status
+                    === selectedStatus;
+
+
+            const matchesIntolerances =
+                !onlyWithIntolerances
+                || hasIntolerances(
+                    response
+                );
+
+
+            return (
+                matchesSearch
+                && matchesStatus
+                && matchesIntolerances
+            );
+        }
+    );
+}
+
+
+function displayValue(value) {
+
+    if (value === null
+            || value === undefined) {
+
+        return "—";
+    }
+
+    const text =
+        String(value).trim();
+
+    if (text === "") {
+        return "—";
+    }
+
+    return text;
+}
+
+
+function formatUpdatedAt(value) {
+
+    if (value === null
+            || value === undefined
+            || value === "") {
+
+        return "—";
+    }
+
+
+    const valueText =
+        String(value);
+
+
+    const containsTimeZone =
+        valueText.endsWith("Z")
+        || /[+-]\d{2}:\d{2}$/
+            .test(valueText);
+
+
+    const utcValue =
+        containsTimeZone
+            ? valueText
+            : valueText + "Z";
+
+
+    const date =
+        new Date(utcValue);
+
+
+    if (Number.isNaN(date.getTime())) {
+
+        return valueText;
+    }
+
+
+    return new Intl.DateTimeFormat(
+        "es-ES",
+        {
+            dateStyle: "short",
+            timeStyle: "short"
+        }
+    ).format(date);
+}
+
+
+function createTextCell(
+        value,
+        className = "") {
+
+    const cell =
+        document.createElement("td");
+
+    cell.textContent =
+        displayValue(value);
+
+    if (className !== "") {
+
+        cell.classList.add(
+            className
+        );
+    }
+
+    return cell;
+}
+
+
+function createStatusCell(status) {
+
+    const cell =
+        document.createElement("td");
+
+    const badge =
+        document.createElement("span");
+
+
+    badge.classList.add(
+        "status-badge"
+    );
+
+
+    const statusClass =
+        statusClasses[status]
+        ?? "status-badge--unknown";
+
+
+    badge.classList.add(
+        statusClass
+    );
+
+
+    badge.textContent =
+        statusLabels[status]
+        ?? displayValue(status);
+
+
+    cell.appendChild(badge);
+
+    return cell;
+}
+
+
+function createResponseRow(response) {
+
+    const row =
+        document.createElement("tr");
+
+
+    row.appendChild(
+        createTextCell(
+            response.displayName
+        )
+    );
+
+    row.appendChild(
+        createTextCell(
+            response.guestName
+        )
+    );
+
+    row.appendChild(
+        createTextCell(
+            response.contact
+        )
+    );
+
+    row.appendChild(
+        createStatusCell(
+            response.status
+        )
+    );
+
+    row.appendChild(
+        createTextCell(
+            response.attendeeCount
+        )
+    );
+
+    row.appendChild(
+        createTextCell(
+            response.intolerances,
+            "admin-table__long-text"
+        )
+    );
+
+    row.appendChild(
+        createTextCell(
+            response.additionalComment,
+            "admin-table__long-text"
+        )
+    );
+
+    row.appendChild(
+        createTextCell(
+            formatUpdatedAt(
+                response.updatedAt
+            )
+        )
+    );
+
+
+    return row;
+}
+
+
+function renderResponses() {
+
+    const filteredResponses =
+        getFilteredResponses();
+
+
+    responsesTableBody
+        .replaceChildren();
+
+
+    resultsCount.textContent =
+        "Mostrando "
+        + filteredResponses.length
+        + " de "
+        + allResponses.length
+        + " invitaciones";
+
+
+    if (filteredResponses.length === 0) {
+
+        const row =
+            document.createElement("tr");
+
+        const cell =
+            document.createElement("td");
+
+
+        cell.colSpan = 8;
+
+        cell.textContent =
+            "No hay resultados para "
+                + "los filtros seleccionados.";
+
+
+        row.appendChild(cell);
+
+        responsesTableBody
+            .appendChild(row);
+
+        return;
+    }
+
+
+    const fragment =
+        document.createDocumentFragment();
+
+
+    filteredResponses.forEach(
+        (response) => {
+
+            fragment.appendChild(
+                createResponseRow(
+                    response
+                )
+            );
+        }
+    );
+
+
+    responsesTableBody
+        .appendChild(fragment);
+}
+
+
+async function fetchJson(url) {
+
+    const response =
+        await fetch(
+            url,
+            {
+                method: "GET",
+
+                headers: {
+                    Accept:
+                        "application/json"
+                },
+
+                credentials:
+                    "same-origin"
+            }
+        );
+
+
+    if (response.redirected) {
+
+        const finalUrl =
+            new URL(
+                response.url,
+                window.location.origin
+            );
+
+
+        if (finalUrl.pathname === "/login") {
+
+            window.location.assign(
+                "/login"
+            );
+
+            throw new Error(
+                "AUTHENTICATION_REQUIRED"
+            );
+        }
+    }
+
+
+    if (!response.ok) {
+
+        throw new Error(
+            "HTTP_"
+                + response.status
+        );
+    }
+
+
+    const contentType =
+        response.headers.get(
+            "content-type"
+        ) ?? "";
+
+
+    if (!contentType.includes(
+            "application/json")) {
+
+        throw new Error(
+            "INVALID_RESPONSE_TYPE"
+        );
+    }
+
+
+    return response.json();
+}
+
+
+async function loadAdminPanel() {
+
+    setFiltersDisabled(true);
+
+    showAdminMessage(
+        "Cargando información..."
+    );
+
+
+    try {
+
+        const [
+            dashboard,
+            responses
+        ] = await Promise.all([
+            fetchJson(
+                "/api/admin/dashboard"
+            ),
+
+            fetchJson(
+                "/api/admin/responses"
+            )
+        ]);
+
+
+        fillDashboard(
+            dashboard
+        );
+
+
+        if (!Array.isArray(responses)) {
+
+            throw new Error(
+                "INVALID_RESPONSES_DATA"
+            );
+        }
+
+
+        allResponses =
+            responses;
+
+
+        renderResponses();
+
+        setFiltersDisabled(false);
+
+        showAdminMessage("");
+
+
+    } catch (error) {
+
+        if (
+            error.message
+                === "AUTHENTICATION_REQUIRED"
+        ) {
+
+            return;
+        }
+
+
+        console.error(
+            "Error al cargar "
+                + "el panel administrativo:",
+            error
+        );
+
+
+        responsesTableBody
+            .replaceChildren();
+
+
+        resultsCount.textContent = "";
+
+
+        showAdminMessage(
+            "No se ha podido cargar "
+                + "la información administrativa. "
+                + "Inténtalo de nuevo más tarde.",
+            true
+        );
+    }
+}
+
+
+searchInput.addEventListener(
+    "input",
+    renderResponses
+);
+
+
+statusFilter.addEventListener(
+    "change",
+    renderResponses
+);
+
+
+intolerancesFilter.addEventListener(
+    "change",
+    renderResponses
+);
+
+
+loadAdminPanel();
+```
+
+---
+
+# 16. Qué hace `admin-app.js`
+
+El flujo es:
+
+```text
+Carga /admin/
+      ↓
+loadAdminPanel()
+      ↓
+┌──────────────────────┐
+│                      │
+▼                      ▼
+dashboard          responses
+│                      │
+▼                      ▼
+4 tarjetas          tabla
+                       │
+                       ▼
+                filtros locales
+```
+
+No realiza ninguna escritura.
+
+Todos los endpoints usados son `GET`.
+
+---
+
+# 17. Seguridad importante del JavaScript
+
+Para introducir datos de invitados en la tabla utilizamos:
+
+```javascript
+element.textContent = value;
+```
+
+No utilizamos:
+
+```javascript
+element.innerHTML = value;
+```
+
+Esto es especialmente importante para:
+
+```text
+guestName
+contact
+intolerances
+additionalComment
+```
+
+porque proceden de entradas realizadas por usuarios.
+
+Un comentario como:
+
+```html
+<script>alert("hola")</script>
+```
+
+se mostrará como texto en la tabla en lugar de interpretarse como HTML.
+
+---
+
+# 18. Fechas UTC
+
+El backend almacena las fechas internas como UTC.
+
+Sin embargo, `AdminRsvpResponse` utiliza:
+
+```java
+LocalDateTime
+```
+
+y el JSON puede llegar como:
+
+```text
+2026-08-11T15:30:00
+```
+
+sin la letra `Z`.
+
+Por eso:
+
+```javascript
+formatUpdatedAt()
+```
+
+interpreta ese valor como UTC añadiendo temporalmente:
+
+```text
+Z
+```
+
+antes de mostrarlo en la hora local del navegador.
+
+No modificaremos el DTO ni el backend en esta fase.
+
+---
+
+# 19. Búsqueda sin problemas con acentos
+
+La función:
+
+```javascript
+normalizeText()
+```
+
+permite que una búsqueda como:
+
+```text
+garcia
+```
+
+pueda encontrar:
+
+```text
+García
+```
+
+También ignora mayúsculas y minúsculas.
+
+Los campos buscados son exclusivamente:
+
+```text
+displayName
+guestName
+contact
+```
+
+Tal como establece el Documento Maestro.
+
+---
+
+# 20. Paso 5 — Crear la prueba del panel
+
+Ruta:
+
+```text
+src/test/java/nc/admitionum/controller/AdminPageTest.java
+```
+
+Contenido completo:
+
+```java
+package nc.admitionum.controller;
+
+import static org.hamcrest.Matchers.containsString;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class AdminPageTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Test
+    void adminPageShouldRequireAuthentication()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/admin/")
+        )
+            .andExpect(
+                status().is3xxRedirection()
+            )
+            .andExpect(
+                redirectedUrl("/login")
+            );
+    }
+
+    @Test
+    void adminShouldReachPanelRoute()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/admin/")
+                .with(
+                    user("test-admin")
+                        .roles("ADMIN")
+                )
+        )
+            .andExpect(status().isOk())
+            .andExpect(
+                forwardedUrl(
+                    "/admin/index.html"
+                )
+            );
+    }
+
+    @Test
+    void adminStaticPageShouldContainPanelElements()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/admin/index.html")
+                .with(
+                    user("test-admin")
+                        .roles("ADMIN")
+                )
+        )
+            .andExpect(status().isOk())
+            .andExpect(
+                content().string(
+                    containsString(
+                        "Panel de administración"
+                    )
+                )
+            )
+            .andExpect(
+                content().string(
+                    containsString(
+                        "dashboard-total-invitations"
+                    )
+                )
+            )
+            .andExpect(
+                content().string(
+                    containsString(
+                        "responses-table-body"
+                    )
+                )
+            )
+            .andExpect(
+                content().string(
+                    containsString(
+                        "/js/admin-app.js"
+                    )
+                )
+            );
+    }
+
+    @Test
+    void adminScriptShouldBeAvailable()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/js/admin-app.js")
+        )
+            .andExpect(status().isOk())
+            .andExpect(
+                content().string(
+                    containsString(
+                        "/api/admin/dashboard"
+                    )
+                )
+            )
+            .andExpect(
+                content().string(
+                    containsString(
+                        "/api/admin/responses"
+                    )
+                )
+            );
+    }
+}
+```
+
+---
+
+# 21. Qué comprueba `AdminPageTest`
+
+Primera prueba:
+
+```text
+Usuario anónimo
+      ↓
+/admin/
+      ↓
+/login
+```
+
+Segunda:
+
+```text
+ROLE_ADMIN
+      ↓
+/admin/
+      ↓
+/admin/index.html
+```
+
+Tercera:
+
+Comprueba que realmente existe el HTML y contiene los elementos fundamentales.
+
+Cuarta:
+
+Comprueba que el fichero JavaScript está empaquetado y referencia los endpoints correctos.
+
+No intentamos ejecutar JavaScript dentro de JUnit.
+
+Para eso utilizaremos una prueba manual en navegador.
+
+---
+
+# 22. Ejecutar únicamente la prueba
+
+### PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=AdminPageTest" test
+```
+
+### Git Bash
+
+```bash
+./mvnw -Dtest=AdminPageTest test
+```
+
+Esperado:
+
+```text
+Tests run: 4
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+---
+
+# 23. Ejecutar toda la batería
+
+Después:
+
+### PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+### Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Deben seguir funcionando, entre otras:
+
+```text
+SecurityConfigTest
+AdminControllerTest
+AdminServiceTest
+AdminPageTest
+```
+
+`AdminControllerTest` ya verifica que un administrador puede obtener dashboard y respuestas y que las rutas administrativas permanecen protegidas.
+
+Resultado final obligatorio:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+# 24. Paso 6 — Ejecutar la aplicación
+
+## PowerShell
+
+Configura las credenciales locales como ya hiciste en la Fase 11 si no están definidas:
+
+```powershell
+$env:ADMIN_USERNAME="admin"
+$env:ADMIN_PASSWORD="tu-password-local"
+```
+
+Después:
+
+```powershell
+.\mvnw.cmd spring-boot:run
+```
+
+## Git Bash
+
+```bash
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="tu-password-local"
+
+./mvnw spring-boot:run
+```
+
+No pongas esas credenciales en Git.
+
+---
+
+# 25. Prueba manual 1 — Acceso anónimo
+
+Abre:
+
+```text
+http://localhost:8080/admin/
+```
+
+Sin estar autenticado.
+
+Debe aparecer el login de Spring Security.
+
+Introduce el usuario y contraseña configurados.
+
+Después debes llegar al panel.
+
+---
+
+# 26. Prueba manual 2 — Dashboard
+
+Comprueba las cuatro tarjetas:
+
+```text
+Invitaciones totales
+Pendientes
+Asistentes confirmados
+Respuestas con intolerancias
+```
+
+Para comprobar los números directamente puedes abrir, estando autenticado:
+
+```text
+http://localhost:8080/api/admin/dashboard
+```
+
+Ejemplo:
+
+```json
+{
+  "totalInvitations": 4,
+  "answeredInvitations": 3,
+  "pendingInvitations": 1,
+  "confirmedInvitations": 2,
+  "declinedInvitations": 1,
+  "confirmedAttendees": 4,
+  "responsesWithIntolerances": 1
+}
+```
+
+Los cuatro campos mostrados por la interfaz deben coincidir.
+
+---
+
+# 27. Prueba manual 3 — Tabla
+
+Comprueba que aparecen:
+
+```text
+Invitación
+Invitado
+Contacto
+Estado
+Asistentes
+Intolerancias
+Comentario
+Última actualización
+```
+
+Una invitación sin respuesta debe mostrar algo equivalente a:
+
+```text
+Familia pendiente
+—
+—
+Pendiente
+—
+—
+—
+—
+```
+
+Esto es correcto porque la API administrativa devuelve `null` en los campos de respuesta de invitaciones pendientes.
+
+---
+
+# 28. Prueba manual 4 — Estados
+
+Comprueba visualmente que puedes encontrar:
+
+```text
+Confirmada
+Rechazada
+Pendiente
+Desactivada
+Expirada
+```
+
+El backend utiliza:
+
+```text
+CONFIRMED
+DECLINED
+PENDING
+DISABLED
+EXPIRED
+```
+
+y JavaScript solamente los traduce para su presentación.
+
+No cambies los valores que devuelve la API.
+
+---
+
+# 29. Prueba manual 5 — Buscar
+
+En:
+
+```text
+Buscar
+```
+
+prueba:
+
+```text
+garcia
+```
+
+Debe encontrar, por ejemplo:
+
+```text
+Familia García
+Ana García
+```
+
+También prueba parte de un contacto:
+
+```text
+@example.com
+```
+
+La tabla debe actualizarse inmediatamente.
+
+---
+
+# 30. Prueba manual 6 — Filtrar por estado
+
+Selecciona:
+
+```text
+Confirmadas
+```
+
+Solo deben quedar:
+
+```text
+CONFIRMED
+```
+
+Después:
+
+```text
+Pendientes
+```
+
+Solo:
+
+```text
+PENDING
+```
+
+Y repite con:
+
+```text
+Rechazadas
+Desactivadas
+Expiradas
+```
+
+---
+
+# 31. Prueba manual 7 — Intolerancias
+
+Marca:
+
+```text
+Solo con intolerancias
+```
+
+Solo deben mostrarse filas cuyo:
+
+```text
+intolerances
+```
+
+contenga texto.
+
+Puedes combinarlo con:
+
+```text
+Estado = Confirmadas
+```
+
+---
+
+# 32. Prueba manual 8 — Filtros combinados
+
+Ejemplo:
+
+```text
+Buscar: garcia
+Estado: Confirmadas
+Solo con intolerancias: marcado
+```
+
+Los tres criterios deben aplicarse simultáneamente.
+
+El contador superior debe mostrar algo como:
+
+```text
+Mostrando 1 de 10 invitaciones
+```
+
+---
+
+# 33. Prueba manual 9 — Seguridad del contenido
+
+Introduce desde el formulario público, únicamente como prueba local, un comentario:
+
+```text
+<b>Comentario de prueba</b>
+```
+
+En el panel debe mostrarse literalmente:
+
+```text
+<b>Comentario de prueba</b>
+```
+
+No debe mostrarse en negrita.
+
+No debe interpretarse como HTML.
+
+---
+
+# 34. Prueba manual 10 — Responsive
+
+Abre las herramientas de desarrollo del navegador.
+
+Simula:
+
+```text
+375 px
+```
+
+Comprueba:
+
+* Las tarjetas se reorganizan.
+* Los filtros quedan uno debajo de otro.
+* La página no se desborda.
+* La tabla dispone de desplazamiento horizontal.
+* El botón/enlace de sesión sigue accesible.
+
+El formulario público actual ya utiliza un diseño responsive similar y el mismo fichero CSS.
+
+---
+
+# 35. Prueba manual 11 — Cerrar sesión
+
+Pulsa:
+
+```text
+Cerrar sesión
+```
+
+Spring Security gestionará `/logout`.
+
+Después intenta volver a:
+
+```text
+/admin/
+```
+
+No debes poder consultar el panel sin volver a autenticarte.
+
+---
+
+# 36. No necesitamos datos especiales nuevos
+
+Si ya tienes invitaciones y respuestas locales de las fases anteriores, utilízalas.
+
+Si necesitas respuestas para comprobar el panel, créalas mediante el formulario público:
+
+```text
+/?code=CODIGO
+```
+
+Esto es preferible a crear un nuevo mecanismo de carga de datos durante esta fase.
+
+No añadiremos:
+
+```text
+data.sql
+CommandLineRunner
+seeds nuevos
+```
+
+solo para probar el panel.
+
+---
+
+# 37. Errores habituales
+
+## `/admin/` devuelve 404
+
+Comprueba que exista:
+
+```text
+src/main/java/nc/admitionum/controller/AdminPageController.java
+```
+
+y:
+
+```text
+src/main/resources/static/admin/index.html
+```
+
+Comprueba también:
+
+```java
+return "forward:/admin/index.html";
+```
+
+---
+
+## `/admin/` devuelve 403 siendo administrador
+
+Comprueba que has iniciado sesión con el usuario configurado mediante:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+Y no con un usuario que tenga únicamente:
+
+```text
+ROLE_USER
+```
+
+---
+
+## El navegador vuelve al login al cargar las tarjetas
+
+Comprueba que la sesión continúe activa.
+
+Los endpoints:
+
+```text
+/api/admin/dashboard
+/api/admin/responses
+```
+
+también necesitan `ROLE_ADMIN`.
+
+---
+
+## El HTML aparece pero no hay datos
+
+Abre las herramientas del navegador:
+
+```text
+F12
+→ Network
+```
+
+Busca:
+
+```text
+/api/admin/dashboard
+/api/admin/responses
+```
+
+Ambos deben devolver:
+
+```text
+200
+```
+
+---
+
+## `Unexpected token '<'`
+
+Suele significar que JavaScript esperaba JSON pero recibió HTML.
+
+En este proyecto el caso típico sería una redirección a:
+
+```text
+/login
+```
+
+por una sesión terminada.
+
+`fetchJson()` ya incluye una comprobación específica para este caso.
+
+---
+
+## La tabla muestra `undefined`
+
+Comprueba que no hayas cambiado los nombres de la API.
+
+Deben ser exactamente:
+
+```text
+displayName
+status
+guestName
+contact
+attendeeCount
+intolerances
+additionalComment
+updatedAt
+```
+
+---
+
+## Una invitación pendiente muestra guiones
+
+Es correcto.
+
+La Fase 12 decidió que una invitación sin respuesta se incluye igualmente en la lista y que sus campos específicos de respuesta sean `null`.
+
+---
+
+## Las fechas parecen desplazadas
+
+Comprueba que no hayas eliminado la lógica de:
+
+```javascript
+valueText + "Z"
+```
+
+Las fechas internas del proyecto están definidas como UTC.
+
+---
+
+## El filtro no encuentra `García` al escribir `garcia`
+
+Comprueba que `normalizeText()` conserve:
+
+```javascript
+.normalize("NFD")
+.replace(
+    /[\u0300-\u036f]/g,
+    ""
+)
+```
+
+---
+
+## El JavaScript puede verse sin login
+
+Es correcto con la configuración actual porque:
+
+```text
+/js/**
+```
+
+es público.
+
+Los datos continúan protegidos por:
+
+```text
+/api/admin/**
+```
+
+No introduzcas secretos en `admin-app.js`.
+
+---
+
+# 38. Resultado estructural final de la fase
+
+```text
+src/main/
+├── java/
+│   └── nc/admitionum/
+│       └── controller/
+│           ├── AdminController.java
+│           └── AdminPageController.java
+│
+└── resources/
+    └── static/
+        ├── index.html
+        │
+        ├── admin/
+        │   └── index.html
+        │
+        ├── css/
+        │   └── styles.css
+        │
+        └── js/
+            ├── public-app.js
+            └── admin-app.js
+```
+
+Pruebas:
+
+```text
+src/test/java/nc/admitionum/
+├── config/
+│   └── SecurityConfigTest.java
+│
+└── controller/
+    ├── AdminControllerTest.java
+    ├── AdminPageTest.java
+    ├── HealthControllerTest.java
+    └── PublicInvitationControllerTest.java
+```
+
+---
+
+# 39. Revisión de Git
+
+Ejecuta:
+
+```bash
+git status
+```
+
+Los cambios previstos son:
+
+```text
+src/main/java/nc/admitionum/controller/AdminPageController.java
+
+src/main/resources/static/admin/index.html
+src/main/resources/static/js/admin-app.js
+src/main/resources/static/css/styles.css
+
+src/test/java/nc/admitionum/controller/AdminPageTest.java
+```
+
+No deberían aparecer cambios en:
+
+```text
+pom.xml
+SecurityConfig.java
+AdminController.java
+AdminService.java
+DTO
+entidades
+repositorios
+application.properties
+```
+
+Comprueba:
+
+```bash
+git diff
+```
+
+Y:
+
+```bash
+git status
+```
+
+No añadas:
+
+```text
+data/
+target/
+*.mv.db
+```
+
+---
+
+# 40. Commits recomendados
+
+Podemos dividir la fase en tres commits.
+
+## Primer commit — estructura del panel
+
+```bash
+git add src/main/java/nc/admitionum/controller/AdminPageController.java
+git add src/main/resources/static/admin/index.html
+git add src/main/resources/static/css/styles.css
+
+git commit -m "feat: add administrative panel page"
+```
+
+## Segundo commit — comportamiento JavaScript
+
+```bash
+git add src/main/resources/static/js/admin-app.js
+
+git commit -m "feat: add administrative panel interactions"
+```
+
+## Tercer commit — pruebas
+
+```bash
+git add src/test/java/nc/admitionum/controller/AdminPageTest.java
+
+git commit -m "test: verify administrative panel"
+```
+
+Después:
+
+```bash
+git push -u origin Phase13
+```
+
+Y crea el pull request:
+
+```text
+Phase13 → main
+```
+
+---
+
+# 41. Criterios de finalización de la Fase 13
+
+La fase estará terminada cuando:
+
+```text
+[ ] La Fase 12 figura como completada.
+[ ] Phase13 parte de main actualizado.
+[ ] mvnw clean test era correcto antes de empezar.
+
+[ ] Existe AdminPageController.
+[ ] /admin/ dirige a /admin/index.html.
+[ ] /admin/ requiere ROLE_ADMIN.
+[ ] Un anónimo es dirigido al login.
+
+[ ] Existe static/admin/index.html.
+[ ] Existe static/js/admin-app.js.
+[ ] styles.css contiene los estilos administrativos.
+
+[ ] El panel muestra Invitaciones totales.
+[ ] El panel muestra Pendientes.
+[ ] El panel muestra Asistentes confirmados.
+[ ] El panel muestra Respuestas con intolerancias.
+
+[ ] Se consume GET /api/admin/dashboard.
+[ ] Se consume GET /api/admin/responses.
+[ ] No se ha creado ninguna API nueva.
+
+[ ] La tabla muestra Invitación.
+[ ] La tabla muestra Nombre del invitado.
+[ ] La tabla muestra Contacto.
+[ ] La tabla muestra Estado.
+[ ] La tabla muestra Número de asistentes.
+[ ] La tabla muestra Intolerancias.
+[ ] La tabla muestra Comentario adicional.
+[ ] La tabla muestra Última actualización.
+
+[ ] CONFIRMED se muestra como Confirmada.
+[ ] DECLINED se muestra como Rechazada.
+[ ] PENDING se muestra como Pendiente.
+[ ] DISABLED se muestra como Desactivada.
+[ ] EXPIRED se muestra como Expirada.
+
+[ ] Los valores null se muestran como —.
+[ ] Se utiliza textContent para los datos del invitado.
+[ ] Las fechas UTC se muestran correctamente.
+
+[ ] La búsqueda funciona por DisplayName.
+[ ] La búsqueda funciona por GuestName.
+[ ] La búsqueda funciona por Contact.
+[ ] La búsqueda ignora mayúsculas.
+[ ] La búsqueda tolera acentos.
+
+[ ] Funciona el filtro por estado.
+[ ] Funciona el filtro de intolerancias.
+[ ] Los filtros pueden combinarse.
+[ ] El contador de resultados se actualiza.
+
+[ ] La interfaz funciona en móvil.
+[ ] La tabla permite desplazamiento horizontal.
+[ ] Existe acceso para cerrar sesión.
+
+[ ] AdminPageTest funciona.
+[ ] AdminControllerTest continúa funcionando.
+[ ] AdminServiceTest continúa funcionando.
+[ ] SecurityConfigTest continúa funcionando.
+[ ] Todas las pruebas anteriores continúan funcionando.
+[ ] mvnw clean test finaliza con BUILD SUCCESS.
+
+[ ] No se ha implementado CSV.
+[ ] No se ha añadido submittedAt al DTO.
+[ ] No se ha modificado Azure SQL.
+[ ] No se ha creado Docker.
+[ ] No se ha creado Azure Container Apps.
+[ ] No se ha creado GitHub Actions.
+
+[ ] Se han realizado los commits.
+[ ] Phase13 se ha subido.
+[ ] La fase se ha integrado en main.
+```
+
+---
+
+# 42. Elementos que quedan expresamente para después
+
+Al cerrar esta fase, **no avances todavía** a:
+
+```text
+Fase 14 — Exportación CSV.
+Fase 15 — Azure SQL.
+Fase 16 — Docker.
+Fase 17 — Azure Container Apps.
+Fase 18 — GitHub Actions.
+Fase 19 — Portfolio.
+```
+
+Especialmente, no añadas ahora un botón de exportación aunque parezca sencillo.
+
+---
+
+# 43. Texto para el registro de trazabilidad
+
+Cuando hayas ejecutado realmente todas las pruebas y comprobaciones, puedes añadir:
+
+```text
+Fase 13 — Creación del panel administrativo v1.1
+
+Estado: completada.
+
+Objetivo:
+Crear la interfaz administrativa de Admitionum utilizando
+HTML, CSS y JavaScript sin frameworks, consumiendo
+exclusivamente la API administrativa creada en la Fase 12.
+
+Ruta administrativa:
+- /admin/
+- Requiere ROLE_ADMIN.
+- Los usuarios anónimos son dirigidos al login.
+
+Archivos nuevos:
+- src/main/java/nc/admitionum/controller/
+  AdminPageController.java
+- src/main/resources/static/admin/index.html
+- src/main/resources/static/js/admin-app.js
+- src/test/java/nc/admitionum/controller/
+  AdminPageTest.java
+
+Archivo modificado:
+- src/main/resources/static/css/styles.css
+
+Dashboard:
+- Invitaciones totales.
+- Pendientes.
+- Asistentes confirmados.
+- Respuestas con intolerancias.
+
+Endpoints consumidos:
+- GET /api/admin/dashboard
+- GET /api/admin/responses
+
+Tabla:
+- Invitación.
+- Nombre del invitado.
+- Contacto.
+- Estado.
+- Número de asistentes.
+- Intolerancias.
+- Comentario adicional.
+- Última actualización.
+
+Estados visualizados:
+- CONFIRMED → Confirmada.
+- DECLINED → Rechazada.
+- PENDING → Pendiente.
+- DISABLED → Desactivada.
+- EXPIRED → Expirada.
+
+Filtros:
+- Búsqueda por nombre de invitación.
+- Búsqueda por nombre del invitado.
+- Búsqueda por contacto.
+- Filtro por estado.
+- Filtro de respuestas con intolerancias.
+- Los filtros se ejecutan localmente en JavaScript sobre
+  la lista obtenida desde la API.
+
+Seguridad:
+- /admin/** continúa protegido mediante ROLE_ADMIN.
+- /api/admin/** continúa protegido mediante ROLE_ADMIN.
+- El JavaScript no contiene secretos.
+- Los datos recibidos de usuarios se insertan mediante
+  textContent y no mediante innerHTML.
+
+Responsive:
+- Las tarjetas se reorganizan en pantallas pequeñas.
+- Los filtros se apilan.
+- La tabla utiliza desplazamiento horizontal cuando
+  el ancho disponible es insuficiente.
+
+Pruebas:
+- AdminPageTest comprueba autenticación.
+- AdminPageTest comprueba la ruta /admin/.
+- AdminPageTest comprueba el HTML administrativo.
+- AdminPageTest comprueba la presencia de admin-app.js.
+- AdminControllerTest continúa funcionando.
+- AdminServiceTest continúa funcionando.
+- SecurityConfigTest continúa funcionando.
+- mvnw clean test finaliza con BUILD SUCCESS.
+
+Elementos no desarrollados:
+- Exportación CSV.
+- Azure SQL.
+- Docker.
+- Azure Container Apps.
+- GitHub Actions.
+- Documentación final del portfolio.
+
+Commits:
+- feat: add administrative panel page
+- feat: add administrative panel interactions
+- test: verify administrative panel
+
+Siguiente fase:
+- Fase 14 — Crear exportación CSV.
+```
+
+Con esta fase mantenemos el objetivo original: **panel sencillo, de solo lectura y sin frameworks**, aprovechando exactamente el backend que ya está implementado en la Fase 12.
+
+[1]: https://docs.spring.io/spring-boot/reference/web/servlet.html "https://docs.spring.io/spring-boot/reference/web/servlet.html"
+
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 13.1
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+## Fix del punto 22 — Fase 13.1
+
+Modificaremos únicamente:
+
+```text
+src/test/java/nc/admitionum/controller/AdminPageTest.java
+```
+
+### 1. Causa
+
+En esta parte del test:
+
+```java
+.andExpect(
+    content().string(
+        containsString(
+            "Panel de administración"
+        )
+    )
+)
+```
+
+`MockMvc` está convirtiendo los bytes de la respuesta HTML a `String` sin interpretar correctamente el UTF-8.
+
+El archivo HTML sí contiene:
+
+```html
+<meta charset="UTF-8">
+```
+
+pero eso informa al **navegador** de la codificación del documento. No necesariamente hace que `MockHttpServletResponse` utilice UTF-8 cuando el test convierte internamente la respuesta a texto.
+
+Por eso no vamos a tocar:
+
+```text
+index.html
+styles.css
+SecurityConfig
+application.properties
+```
+
+---
+
+# 2. Sustituir `AdminPageTest.java`
+
+Abre:
+
+```text
+src/test/java/nc/admitionum/controller/AdminPageTest.java
+```
+
+y sustituye su contenido completo por este:
+
+```java
+package nc.admitionum.controller;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
+import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+import java.nio.charset.StandardCharsets;
+
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
+class AdminPageTest {
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    @Test
+    void adminPageShouldRequireAuthentication()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/admin/")
+        )
+            .andExpect(
+                status().is3xxRedirection()
+            )
+            .andExpect(
+                redirectedUrl("/login")
+            );
+    }
+
+    @Test
+    void adminShouldReachPanelRoute()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/admin/")
+                .with(
+                    user("test-admin")
+                        .roles("ADMIN")
+                )
+        )
+            .andExpect(status().isOk())
+            .andExpect(
+                forwardedUrl(
+                    "/admin/index.html"
+                )
+            );
+    }
+
+    @Test
+    void adminStaticPageShouldContainPanelElements()
+            throws Exception {
+
+        MvcResult result =
+            mockMvc.perform(
+                get("/admin/index.html")
+                    .with(
+                        user("test-admin")
+                            .roles("ADMIN")
+                    )
+            )
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String html =
+            result
+                .getResponse()
+                .getContentAsString(
+                    StandardCharsets.UTF_8
+                );
+
+        assertThat(html)
+            .contains(
+                "Panel de administración"
+            )
+            .contains(
+                "dashboard-total-invitations"
+            )
+            .contains(
+                "responses-table-body"
+            )
+            .contains(
+                "/js/admin-app.js"
+            );
+    }
+
+    @Test
+    void adminScriptShouldBeAvailable()
+            throws Exception {
+
+        mockMvc.perform(
+            get("/js/admin-app.js")
+        )
+            .andExpect(status().isOk())
+            .andExpect(
+                content().string(
+                    containsString(
+                        "/api/admin/dashboard"
+                    )
+                )
+            )
+            .andExpect(
+                content().string(
+                    containsString(
+                        "/api/admin/responses"
+                    )
+                )
+            );
+    }
+}
+```
+
+---
+
+# 3. Qué hemos cambiado
+
+Antes hacíamos directamente:
+
+```java
+content().string(
+    containsString(
+        "Panel de administración"
+    )
+)
+```
+
+Ahora primero recuperamos el resultado HTTP:
+
+```java
+MvcResult result =
+    mockMvc.perform(...)
+        .andExpect(status().isOk())
+        .andReturn();
+```
+
+Después convertimos los bytes **indicando expresamente UTF-8**:
+
+```java
+String html =
+    result
+        .getResponse()
+        .getContentAsString(
+            StandardCharsets.UTF_8
+        );
+```
+
+Ahí está realmente la corrección.
+
+Finalmente comprobamos:
+
+```java
+assertThat(html)
+    .contains("Panel de administración");
+```
+
+Ahora Java interpretará correctamente:
+
+```text
+ó
+í
+—
+ñ
+á
+```
+
+---
+
+# 4. Import nuevo importante
+
+Añadimos:
+
+```java
+import java.nio.charset.StandardCharsets;
+```
+
+`StandardCharsets.UTF_8` evita escribir manualmente:
+
+```java
+"UTF-8"
+```
+
+y utiliza directamente la constante estándar de Java.
+
+También añadimos:
+
+```java
+import org.springframework.test.web.servlet.MvcResult;
+```
+
+porque ahora guardamos el resultado de la petición.
+
+Y:
+
+```java
+import static org.assertj.core.api.Assertions.assertThat;
+```
+
+para hacer las comprobaciones sobre el HTML ya decodificado.
+
+---
+
+# 5. No cambies el HTML
+
+Tu HTML está bien.
+
+Especialmente, conserva:
+
+```html
+<meta charset="UTF-8">
+```
+
+No hagas soluciones como:
+
+```text
+Panel de administracion
+Cerrar sesion
+Invitacion
+Ultima actualizacion
+```
+
+Eso solo escondería el problema.
+
+Tampoco sustituyas:
+
+```text
+—
+```
+
+por:
+
+```text
+-
+```
+
+El contenido original es correcto; el test era quien lo estaba interpretando mal.
+
+---
+
+# 6. Ejecutar nuevamente solo `AdminPageTest`
+
+Desde:
+
+```text
+C:\Users\proto\Proyectos\admitionum
+```
+
+## PowerShell
+
+```powershell
+.\mvnw.cmd "-Dtest=AdminPageTest" test
+```
+
+## Git Bash
+
+```bash
+./mvnw -Dtest=AdminPageTest test
+```
+
+Ahora el resultado esperado es:
+
+```text
+Tests run: 4
+Failures: 0
+Errors: 0
+Skipped: 0
+
+BUILD SUCCESS
+```
+
+---
+
+# 7. Si todavía fallase
+
+Si siguiera apareciendo:
+
+```text
+administraciÃ³n
+```
+
+haz esta comprobación en PowerShell:
+
+```powershell
+Get-Content `
+    .\src\main\resources\static\admin\index.html `
+    -Encoding UTF8 |
+    Select-String "Panel de"
+```
+
+Debe mostrar:
+
+```text
+Panel de administración
+```
+
+Si lo muestra correctamente, el archivo está guardado en UTF-8.
+
+También puedes comprobar:
+
+```powershell
+Get-Content `
+    .\src\main\resources\static\admin\index.html `
+    -Encoding UTF8 |
+    Select-String "Cerrar sesión"
+```
+
+Debe encontrarlo.
+
+Por el error que has mostrado, **lo más probable es que el archivo ya esté correctamente guardado y solo haya que corregir el test**.
+
+---
+
+# 8. Después ejecuta toda la batería
+
+Cuando `AdminPageTest` pase:
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+O Git Bash:
+
+```bash
+./mvnw clean test
+```
+
+Resultado obligatorio:
+
+```text
+BUILD SUCCESS
+```
+
+No continúes con las pruebas manuales del punto 24 en adelante hasta conseguirlo.
+
+---
+
+# 9. Por qué `adminScriptShouldBeAvailable` probablemente sí funcionó
+
+Ese test busca:
+
+```text
+/api/admin/dashboard
+/api/admin/responses
+```
+
+Todos esos caracteres son ASCII.
+
+Por eso no le afecta el problema de codificación.
+
+El test que falla busca:
+
+```text
+Panel de administración
+```
+
+que contiene:
+
+```text
+ó
+```
+
+Y ahí aparece el problema.
+
+Esto encaja perfectamente con:
+
+```text
+4 pruebas
+1 fallo
+3 correctas
+```
+
+---
+
+# 10. Resultado esperado tras el fix
+
+La prueba problemática pasará a interpretar:
+
+```text
+Panel de administración
+```
+
+en lugar de:
+
+```text
+Panel de administraciÃ³n
+```
+
+Y también, aunque no lo comprobemos expresamente, el contenido quedará correctamente interpretado como:
+
+```text
+Administración
+Cerrar sesión
+Cargando información...
+Invitación
+Última actualización
+—
+```
+
+---
+
+# 11. Registro del fix
+
+Este problema no requiere crear una Fase 14 ni modificar el Documento Maestro. Es una corrección interna de la Fase 13.
+
+Puedes registrarlo posteriormente como:
+
+```text
+Fase 13.1 — Corrección de codificación UTF-8 en AdminPageTest
+
+Problema:
+La prueba adminStaticPageShouldContainPanelElements fallaba
+al comparar textos con caracteres españoles.
+
+Ejemplo:
+- Esperado: "Panel de administración".
+- Interpretado por MockMvc:
+  "Panel de administraciÃ³n".
+
+Causa:
+El contenido HTML estaba almacenado en UTF-8, pero la
+conversión de la respuesta de MockMvc a String no utilizaba
+explícitamente UTF-8.
+
+Solución:
+- No se modificó el HTML.
+- No se eliminaron caracteres acentuados.
+- No se modificó la configuración global de Spring.
+- AdminPageTest recupera ahora MvcResult.
+- El contenido se convierte mediante:
+  getContentAsString(StandardCharsets.UTF_8).
+- Las comprobaciones del HTML se realizan posteriormente
+  con AssertJ.
+
+Archivo modificado:
+- src/test/java/nc/admitionum/controller/AdminPageTest.java
+
+Verificación:
+- AdminPageTest: 4 tests, 0 failures, 0 errors.
+- mvnw clean test: BUILD SUCCESS.
+
+Alcance:
+Corrección exclusiva de pruebas de la Fase 13.
+No se modifica funcionalidad de producción.
+```
+
+Primero prueba únicamente:
+
+```powershell
+.\mvnw.cmd "-Dtest=AdminPageTest" test
+```
+
+El fallo solo afecta a la prueba, el comportamiento del proyecto es adecuado en producción.
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 14
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 

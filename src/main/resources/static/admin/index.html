@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <meta
+        name="description"
+        content="Panel administrativo de Admitionum"
+    >
+
+    <title>Administración | Admitionum</title>
+
+    <link
+        rel="stylesheet"
+        href="/css/styles.css"
+    >
+
+    <script
+        src="/js/admin-app.js"
+        defer
+    ></script>
+</head>
+
+<body class="admin-body">
+
+    <main class="admin-page-container">
+
+        <header class="admin-header">
+
+            <div>
+                <p class="event-name">
+                    Admitionum
+                </p>
+
+                <h1>
+                    Panel de administración
+                </h1>
+
+                <p class="admin-subtitle">
+                    Consulta las confirmaciones de asistencia.
+                </p>
+            </div>
+
+            <a
+                class="admin-logout-link"
+                href="/logout"
+            >
+                Cerrar sesión
+            </a>
+
+        </header>
+
+        <p
+            id="admin-message"
+            class="admin-message"
+            aria-live="polite"
+        >
+            Cargando información...
+        </p>
+
+        <section
+            class="admin-section"
+            aria-labelledby="summary-title"
+        >
+
+            <h2 id="summary-title">
+                Resumen
+            </h2>
+
+            <div class="summary-grid">
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Invitaciones totales
+                    </p>
+
+                    <p
+                        id="dashboard-total-invitations"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Pendientes
+                    </p>
+
+                    <p
+                        id="dashboard-pending-invitations"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Asistentes confirmados
+                    </p>
+
+                    <p
+                        id="dashboard-confirmed-attendees"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+                <article class="summary-card">
+
+                    <p class="summary-label">
+                        Respuestas con intolerancias
+                    </p>
+
+                    <p
+                        id="dashboard-intolerances"
+                        class="summary-value"
+                    >
+                        —
+                    </p>
+
+                </article>
+
+            </div>
+
+        </section>
+
+        <section
+            class="admin-section"
+            aria-labelledby="responses-title"
+        >
+
+            <div class="admin-section-header">
+
+                <h2 id="responses-title">
+                    Invitaciones y respuestas
+                </h2>
+
+                <p
+                    id="results-count"
+                    class="results-count"
+                    aria-live="polite"
+                ></p>
+
+            </div>
+
+            <div
+                class="admin-filters"
+                aria-label="Filtros de respuestas"
+            >
+
+                <div class="admin-filter">
+
+                    <label for="admin-search">
+                        Buscar
+                    </label>
+
+                    <input
+                        id="admin-search"
+                        type="search"
+                        placeholder="Invitación, nombre o contacto"
+                        autocomplete="off"
+                        disabled
+                    >
+
+                </div>
+
+                <div class="admin-filter">
+
+                    <label for="status-filter">
+                        Estado
+                    </label>
+
+                    <select
+                        id="status-filter"
+                        disabled
+                    >
+                        <option value="ALL">
+                            Todos
+                        </option>
+
+                        <option value="CONFIRMED">
+                            Confirmadas
+                        </option>
+
+                        <option value="DECLINED">
+                            Rechazadas
+                        </option>
+
+                        <option value="PENDING">
+                            Pendientes
+                        </option>
+
+                        <option value="DISABLED">
+                            Desactivadas
+                        </option>
+
+                        <option value="EXPIRED">
+                            Expiradas
+                        </option>
+                    </select>
+
+                </div>
+
+                <label class="checkbox-filter">
+
+                    <input
+                        id="intolerances-filter"
+                        type="checkbox"
+                        disabled
+                    >
+
+                    Solo con intolerancias
+
+                </label>
+
+            </div>
+
+            <div class="table-wrapper">
+
+                <table class="admin-table">
+
+                    <caption class="visually-hidden">
+                        Lista de invitaciones y respuestas
+                    </caption>
+
+                    <thead>
+                        <tr>
+                            <th scope="col">
+                                Invitación
+                            </th>
+
+                            <th scope="col">
+                                Invitado
+                            </th>
+
+                            <th scope="col">
+                                Contacto
+                            </th>
+
+                            <th scope="col">
+                                Estado
+                            </th>
+
+                            <th scope="col">
+                                Asistentes
+                            </th>
+
+                            <th scope="col">
+                                Intolerancias
+                            </th>
+
+                            <th scope="col">
+                                Comentario
+                            </th>
+
+                            <th scope="col">
+                                Última actualización
+                            </th>
+                        </tr>
+                    </thead>
+
+                    <tbody id="responses-table-body">
+
+                        <tr>
+                            <td colspan="8">
+                                Cargando respuestas...
+                            </td>
+                        </tr>
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+        </section>
+
+    </main>
+
+</body>
+</html>
