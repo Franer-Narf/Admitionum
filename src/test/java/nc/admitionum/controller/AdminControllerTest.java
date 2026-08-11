@@ -6,6 +6,14 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+import static org.hamcrest.Matchers.containsString;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+
+import nc.admitionum.service.CsvExportService;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -33,6 +41,9 @@ class AdminControllerTest {
 
     @MockitoBean
     private AdminService adminService;
+
+    @MockitoBean
+    private CsvExportService csvExportService;
 
     @Test
     void dashboardShouldRequireAuthentication()
@@ -202,5 +213,91 @@ class AdminControllerTest {
             .andExpect(
                 status().isForbidden()
             );
+    }
+
+    @Test
+    void csvShouldRequireAuthentication()
+        throws Exception {
+
+        mockMvc.perform(
+        get("/api/admin/responses.csv")
+    )
+        .andExpect(
+            status().is3xxRedirection()
+        )
+        .andExpect(
+            redirectedUrl("/login")
+        );
+    }
+
+    @Test
+    void adminShouldExportCsv()
+        throws Exception {
+
+    String csv =
+        "Invitacion,"
+            + "NombreInvitado,"
+            + "Contacto,"
+            + "Estado,"
+            + "NumeroAsistentes,"
+            + "Intolerancias,"
+            + "ComentarioAdicional,"
+            + "FechaEnvio,"
+            + "UltimaActualizacion"
+            + "\r\n";
+
+    given(
+        csvExportService.exportResponses()
+    ).willReturn(csv);
+
+    mockMvc.perform(
+        get("/api/admin/responses.csv")
+            .with(
+                user("test-admin")
+                    .roles("ADMIN")
+            )
+    )
+        .andExpect(status().isOk())
+        .andExpect(
+            content()
+                .contentTypeCompatibleWith(
+                    MediaType.parseMediaType(
+                        "text/csv"
+                    )
+                )
+        )
+        .andExpect(
+            header().string(
+                HttpHeaders.CONTENT_DISPOSITION,
+                containsString("attachment")
+            )
+        )
+        .andExpect(
+            header().string(
+                HttpHeaders.CONTENT_DISPOSITION,
+                containsString(
+                    "wedding-responses.csv"
+                )
+            )
+        )
+        .andExpect(
+            content().string(csv)
+        );
+    }
+
+    @Test
+    void nonAdminShouldBeForbiddenFromCsv()
+        throws Exception {
+
+    mockMvc.perform(
+        get("/api/admin/responses.csv")
+            .with(
+                user("normal-user")
+                    .roles("USER")
+            )
+    )
+        .andExpect(
+            status().isForbidden()
+        );
     }
 }
