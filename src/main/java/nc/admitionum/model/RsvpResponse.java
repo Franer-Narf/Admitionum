@@ -1,5 +1,9 @@
 package nc.admitionum.model;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Nationalized;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
@@ -39,6 +43,7 @@ public class RsvpResponse {
     )
     private Invitation invitation;
 
+    @Nationalized
     @Column(
         name = "GuestName",
         nullable = false,
@@ -46,6 +51,7 @@ public class RsvpResponse {
     )
     private String guestName;
 
+    @Nationalized
     @Column(
         name = "Contact",
         nullable = false,
@@ -59,18 +65,21 @@ public class RsvpResponse {
     )
     private Boolean attendanceConfirmed;
 
+    @Nationalized
     @Column(
         name = "AttendeeCount",
         nullable = false
     )
     private Integer attendeeCount;
 
+    @Nationalized
     @Column(
         name = "Intolerances",
         length = 500
     )
     private String intolerances;
 
+    @Nationalized
     @Column(
         name = "AdditionalComment",
         length = 1000

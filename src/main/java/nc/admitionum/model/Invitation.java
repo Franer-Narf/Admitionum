@@ -1,5 +1,9 @@
 package nc.admitionum.model;
 
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Nationalized;
+import org.hibernate.type.SqlTypes;
+
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
@@ -37,6 +41,7 @@ public class Invitation {
     )
     private String accessCode;
 
+    @Nationalized
     @Column(
         name = "DisplayName",
         nullable = false,
@@ -44,6 +49,7 @@ public class Invitation {
     )
     private String displayName;
 
+    @JdbcTypeCode(SqlTypes.TINYINT)
     @Column(
         name = "MaxGuests",
         nullable = false
