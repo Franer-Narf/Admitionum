@@ -65,7 +65,7 @@ public class RsvpResponse {
     )
     private Boolean attendanceConfirmed;
 
-    @Nationalized
+    @JdbcTypeCode(SqlTypes.TINYINT)
     @Column(
         name = "AttendeeCount",
         nullable = false
