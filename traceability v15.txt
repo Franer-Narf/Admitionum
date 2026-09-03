@@ -138,11 +138,11 @@ Forma de ayudarme:
 
 Estado actual completado:
 
-Fase 14
+Fase 15
 
 Fase que quiero desarrollar:
 
-Fase 15
+Fase 16
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
@@ -34038,6 +34038,2390 @@ Fase 15
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
+# Fase 15 — Conectar Admitionum con Azure SQL Database
 
+## 1. Revisión del estado actual
+
+Antes de comenzar esta fase se encontraban completadas:
+
+Fase 1 — Crear Spring Boot: completada.
+Fase 2 — Crear API de prueba: completada.
+Fase 2.1 — Fix de configuración de pruebas: completada.
+Fase 3 — Crear Invitation: completada.
+Fase 4 — Consultar Invitation: completada.
+Fase 4.1 — Fix de nombres físicos Hibernate: completada.
+Fase 5 — Crear RsvpResponse: completada.
+Fase 6 — Crear SaveRsvpRequest: completada.
+Fase 7 — Guardar y actualizar respuesta: completada.
+Fase 8 — Implementar validaciones: completada.
+Fase 9 — Crear formulario HTML v1.1: completada.
+Fase 10 — Crear JavaScript público v1.1: completada.
+Fase 10.1 — Ampliación del límite hasta 20 asistentes: completada.
+Fase 11 — Añadir Spring Security: completada.
+Fase 11.1 — Fix de pruebas de seguridad: completada.
+Fase 12 — Crear API administrativa: completada.
+Fase 13 — Crear panel administrativo: completada.
+Fase 13.1 — Fix del panel administrativo: completada.
+Fase 14 — Crear exportación CSV: completada.
+
+Según el Documento Maestro, el siguiente punto obligatorio era:
+
+Fase 15 — Conectar Azure SQL.
+
+Por tanto, la Fase 15 era la siguiente fase correcta.
+
+Configuración que se mantiene:
+
+Proyecto:
+Admitionum.
+
+Versión funcional:
+v1.1.
+
+Java:
+25.
+
+Spring Boot:
+4.1.0.
+
+Maven.
+
+GroupId:
+nc.
+
+ArtifactId:
+admitionum.
+
+Paquete raíz:
+nc.admitionum.
+
+Frontend:
+HTML, CSS y JavaScript sin frameworks.
+
+Persistencia:
+Spring Data JPA.
+
+Base de datos local:
+H2 persistente.
+
+Base de datos de pruebas:
+H2 en memoria.
+
+Base de datos de producción:
+Azure SQL Database.
+
+Seguridad administrativa:
+Spring Security mediante sesión.
+
+---
+
+# 2. Contradicciones y aclaraciones detectadas
+
+## 2.1. Límite antiguo de 10 asistentes
+
+El Documento Maestro v1.1 original contenía todavía ejemplos con:
+
+MaxGuests BETWEEN 1 AND 10
+
+y:
+
+AttendeeCount BETWEEN 0 AND 10
+
+Sin embargo, la Fase 10.1 modificó el límite definitivo del proyecto.
+
+La configuración válida desde entonces es:
+
+MaxGuests:
+1..20.
+
+AttendeeCount:
+0..20.
+
+Por tanto, el esquema creado en Azure SQL durante esta fase utiliza 20 y no 10.
+
+No se revierte la modificación de la Fase 10.1.
+
+---
+
+## 2.2. Integer Java y TINYINT SQL
+
+El Documento Maestro establece:
+
+MaxGuests:
+Integer en Java.
+TINYINT en Azure SQL.
+
+AttendeeCount:
+Integer en Java.
+TINYINT en Azure SQL.
+
+No se modifica Integer por Byte.
+
+Para indicarle explícitamente a Hibernate el tipo SQL esperado se utiliza:
+
+@JdbcTypeCode(SqlTypes.TINYINT)
+
+De esta forma se mantiene:
+
+Java Integer
+    ↓
+Hibernate TINYINT
+    ↓
+Azure SQL TINYINT
+
+Esto es especialmente importante porque producción utiliza:
+
+spring.jpa.hibernate.ddl-auto=validate
+
+y Hibernate debe considerar compatible la entidad Java con la columna existente en Azure SQL.
+
+---
+
+## 2.3. VARCHAR y NVARCHAR
+
+El modelo definitivo utiliza:
+
+AccessCode:
+VARCHAR(50).
+
+DisplayName:
+NVARCHAR(200).
+
+GuestName:
+NVARCHAR(200).
+
+Contact:
+NVARCHAR(200).
+
+Intolerances:
+NVARCHAR(500).
+
+AdditionalComment:
+NVARCHAR(1000).
+
+Para los campos String que deben corresponderse con NVARCHAR se utiliza:
+
+@Nationalized
+
+No se aplica @Nationalized a campos numéricos.
+
+---
+
+## 2.4. Corrección encontrada en AttendeeCount
+
+Durante la Fase 15 se detectó que:
+
+RsvpResponse.attendeeCount
+
+había quedado temporalmente anotado mediante:
+
+@Nationalized
+
+Esto era incorrecto porque AttendeeCount es un valor numérico.
+
+La configuración se corrigió definitivamente a:
+
+@JdbcTypeCode(SqlTypes.TINYINT)
+@Column(
+    name = "AttendeeCount",
+    nullable = false
+)
+private Integer attendeeCount;
+
+@Nationalized permanece únicamente sobre los campos String que requieren NVARCHAR.
+
+Esta corrección forma parte de la Fase 15.
+
+---
+
+## 2.5. La dirección JDBC no es una dirección web
+
+Durante la configuración surgió una duda importante respecto a:
+
+jdbc:sqlserver://admitionum-sql-portfolio.database.windows.net:1433;databaseName=admitionum;encrypt=true;trustServerCertificate=false;loginTimeout=30;
+
+Esta cadena NO es una URL para navegador.
+
+No puede abrirse mediante:
+
+Chrome.
+Edge.
+Firefox.
+
+Debe distinguirse entre:
+
+https://portal.azure.com
+
+→ dirección web.
+
+admitionum-sql-portfolio.database.windows.net
+
+→ nombre DNS del servidor Azure SQL.
+
+jdbc:sqlserver://admitionum-sql-portfolio.database.windows.net:1433;...
+
+→ cadena de conexión utilizada por Microsoft JDBC Driver.
+
+El nombre real del servidor debe obtenerse siempre desde:
+
+Azure Portal
+→ SQL databases
+→ admitionum
+→ Overview
+→ Server name.
+
+---
+
+## 2.6. Ubicación de admitionum_app
+
+Otra duda importante fue dónde debía crearse:
+
+admitionum_app
+
+No es:
+
+- Un recurso de Azure.
+- Una cuenta de Azure.
+- Un usuario de Access Control (IAM).
+- Una Managed Identity.
+- Una cuenta de Microsoft Entra ID.
+
+Es un usuario SQL contenido dentro de la propia base:
+
+admitionum.
+
+Conceptualmente:
+
+Azure
+└── servidor SQL
+    └── admitionum-sql-portfolio
+        └── base de datos
+            └── admitionum
+                ├── dbo.Invitations
+                ├── dbo.RsvpResponses
+                └── admitionum_app
+
+Por tanto, se crea desde Query Editor estando conectado directamente a la base admitionum.
+
+---
+
+# 3. Objetivo exacto de la Fase 15
+
+La Fase 15 debía incorporar Azure SQL como base de datos de producción sin eliminar H2.
+
+El resultado deseado era:
+
+DESARROLLO LOCAL
+
+Spring Boot
+    ↓
+perfil local
+    ↓
+H2 persistente
+    ↓
+data/admitionum.mv.db
+
+
+PRUEBAS
+
+Spring Boot
+    ↓
+perfil test
+    ↓
+H2 en memoria
+    ↓
+jdbc:h2:mem:admitionum-test
+
+
+PRODUCCIÓN
+
+Spring Boot
+    ↓
+perfil prod
+    ↓
+Microsoft JDBC Driver
+    ↓
+Azure SQL Database
+
+La fase incluye:
+
+1. Añadir Microsoft JDBC Driver.
+
+2. Adaptar los tipos JPA necesarios.
+
+3. Crear database/schema.sql.
+
+4. Crear application-prod.properties.
+
+5. Crear/configurar Azure SQL Database.
+
+6. Configurar acceso de red.
+
+7. Crear las tablas de producción.
+
+8. Crear un usuario SQL específico para la aplicación.
+
+9. Configurar credenciales mediante variables de entorno.
+
+10. Conectar Spring Boot desde el ordenador de desarrollo.
+
+11. Hacer que Hibernate valide el esquema.
+
+12. Verificar el funcionamiento contra Azure SQL.
+
+13. Confirmar que H2 continúa funcionando localmente.
+
+14. Confirmar que las pruebas continúan utilizando H2 en memoria.
+
+---
+
+# 4. Elementos que no pertenecen a esta fase
+
+No se implementa todavía:
+
+Dockerfile.
+
+.dockerignore.
+
+Docker.
+
+Azure Container Apps.
+
+Despliegue de Spring Boot en Azure.
+
+GitHub Actions.
+
+CI/CD.
+
+Microsoft Entra ID.
+
+Managed Identity.
+
+Key Vault.
+
+Dominio personalizado.
+
+Infraestructura como código.
+
+No se modifican:
+
+Formulario público.
+
+JavaScript público.
+
+Panel administrativo.
+
+API pública.
+
+API administrativa.
+
+Exportación CSV.
+
+Spring Security.
+
+Reglas de negocio.
+
+Estos elementos ya funcionan o corresponden a fases posteriores.
+
+El orden obligatorio continúa siendo:
+
+Fase 15
+→ Azure SQL.
+
+Fase 16
+→ Docker.
+
+Fase 17
+→ Azure Container Apps.
+
+Fase 18
+→ GitHub Actions.
+
+Fase 19
+→ Documentación final del portfolio.
+
+---
+
+# 5. Arquitectura resultante
+
+Al terminar la fase:
+
+                        ADMITIONUM
+                            │
+              ┌─────────────┴─────────────┐
+              │                           │
+              ▼                           ▼
+         DESARROLLO                  PRODUCCIÓN
+              │                           │
+              ▼                           ▼
+         perfil local                 perfil prod
+              │                           │
+              ▼                           ▼
+             H2                  Microsoft JDBC Driver
+                                          │
+                                          ▼
+                                   Azure SQL Database
+                                          │
+                                          ▼
+                                      admitionum
+
+Las capas Java permanecen iguales:
+
+Controller
+    ↓
+Service
+    ↓
+Repository
+    ↓
+Spring Data JPA
+    ↓
+DataSource
+
+El código de negocio no necesita saber si el DataSource es H2 o Azure SQL.
+
+La configuración del perfil determina qué base se utiliza.
+
+---
+
+# 6. Archivos afectados
+
+Durante la Fase 15 se crean o modifican:
+
+pom.xml
+
+src/main/java/nc/admitionum/model/Invitation.java
+
+src/main/java/nc/admitionum/model/RsvpResponse.java
+
+src/main/resources/application-prod.properties
+
+database/schema.sql
+
+.gitignore
+
+No es necesario modificar:
+
+InvitationService.java.
+
+AdminService.java.
+
+Controladores.
+
+Repositorios.
+
+DTO.
+
+HTML.
+
+CSS.
+
+JavaScript.
+
+---
+
+# 7. Paso 0 — Preparar la rama
+
+La rama utilizada para la fase es:
+
+Phase15
+
+Desde la raíz del proyecto:
+
+git status
+git switch main
+git pull
+git switch -c Phase15
+
+Si ya existe:
+
+git switch Phase15
+
+Antes de realizar cambios se debe comprobar el estado previo.
+
+PowerShell:
+
+.\mvnw.cmd clean test
+
+Git Bash:
+
+./mvnw clean test
+
+Resultado obligatorio antes de avanzar:
+
+BUILD SUCCESS
+
+---
+
+# 8. Paso 1 — Añadir Microsoft JDBC Driver
+
+Archivo:
+
+pom.xml
+
+Se añade:
+
+<dependency>
+    <groupId>com.microsoft.sqlserver</groupId>
+    <artifactId>mssql-jdbc</artifactId>
+    <scope>runtime</scope>
+</dependency>
+
+No se fija manualmente su versión.
+
+Spring Boot administra la versión compatible.
+
+Se utiliza:
+
+runtime
+
+porque Admitionum no necesita utilizar directamente clases específicas del driver.
+
+El driver se utilizará cuando Spring Boot abra el DataSource SQL Server.
+
+Después:
+
+PowerShell:
+
+.\mvnw.cmd clean test
+
+Git Bash:
+
+./mvnw clean test
+
+Resultado:
+
+BUILD SUCCESS
+
+---
+
+# 9. Paso 2 — Adaptar Invitation
+
+Archivo:
+
+src/main/java/nc/admitionum/model/Invitation.java
+
+Imports añadidos:
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.annotations.Nationalized;
+import org.hibernate.type.SqlTypes;
+
+DisplayName se configura:
+
+@Nationalized
+@Column(
+    name = "DisplayName",
+    nullable = false,
+    length = 200
+)
+private String displayName;
+
+Esto representa:
+
+String
+→ NVARCHAR(200)
+
+MaxGuests se configura:
+
+@JdbcTypeCode(SqlTypes.TINYINT)
+@Column(
+    name = "MaxGuests",
+    nullable = false
+)
+private Integer maxGuests;
+
+Esto representa:
+
+Integer
+→ TINYINT
+
+No se cambia Integer por Byte.
+
+AccessCode permanece como String normal, porque la columna de producción debe ser:
+
+VARCHAR(50)
+
+y no NVARCHAR.
+
+---
+
+# 10. Paso 3 — Adaptar RsvpResponse
+
+Archivo:
+
+src/main/java/nc/admitionum/model/RsvpResponse.java
+
+GuestName:
+
+@Nationalized
+@Column(
+    name = "GuestName",
+    nullable = false,
+    length = 200
+)
+private String guestName;
+
+Contact:
+
+@Nationalized
+@Column(
+    name = "Contact",
+    nullable = false,
+    length = 200
+)
+private String contact;
+
+AttendeeCount:
+
+@JdbcTypeCode(SqlTypes.TINYINT)
+@Column(
+    name = "AttendeeCount",
+    nullable = false
+)
+private Integer attendeeCount;
+
+Intolerances:
+
+@Nationalized
+@Column(
+    name = "Intolerances",
+    length = 500
+)
+private String intolerances;
+
+AdditionalComment:
+
+@Nationalized
+@Column(
+    name = "AdditionalComment",
+    length = 1000
+)
+private String additionalComment;
+
+Se conserva:
+
+AttendanceConfirmed:
+Boolean.
+
+SubmittedAt:
+LocalDateTime.
+
+UpdatedAt:
+LocalDateTime.
+
+InvitationId:
+Integer mediante la relación existente.
+
+Después de esta modificación:
+
+PowerShell:
+
+.\mvnw.cmd clean test
+
+Git Bash:
+
+./mvnw clean test
+
+Resultado:
+
+BUILD SUCCESS
+
+---
+
+# 11. Paso 4 — Crear database/schema.sql
+
+Ruta:
+
+database/schema.sql
+
+El archivo contiene el esquema definitivo de producción.
+
+Tabla Invitations:
+
+CREATE TABLE dbo.Invitations (
+    Id INT IDENTITY(1,1)
+        CONSTRAINT PK_Invitations PRIMARY KEY,
+
+    AccessCode VARCHAR(50) NOT NULL,
+
+    DisplayName NVARCHAR(200) NOT NULL,
+
+    MaxGuests TINYINT NOT NULL,
+
+    IsActive BIT NOT NULL
+        CONSTRAINT DF_Invitations_IsActive
+        DEFAULT 1,
+
+    ExpiresAt DATETIME2 NULL,
+
+    CreatedAt DATETIME2 NOT NULL
+        CONSTRAINT DF_Invitations_CreatedAt
+        DEFAULT SYSUTCDATETIME(),
+
+    UpdatedAt DATETIME2 NOT NULL
+        CONSTRAINT DF_Invitations_UpdatedAt
+        DEFAULT SYSUTCDATETIME(),
+
+    CONSTRAINT UQ_Invitations_AccessCode
+        UNIQUE (AccessCode),
+
+    CONSTRAINT CK_Invitations_MaxGuests
+        CHECK (
+            MaxGuests BETWEEN 1 AND 20
+        )
+);
+
+Tabla RsvpResponses:
+
+CREATE TABLE dbo.RsvpResponses (
+    Id INT IDENTITY(1,1)
+        CONSTRAINT PK_RsvpResponses PRIMARY KEY,
+
+    InvitationId INT NOT NULL,
+
+    GuestName NVARCHAR(200) NOT NULL,
+
+    Contact NVARCHAR(200) NOT NULL,
+
+    AttendanceConfirmed BIT NOT NULL,
+
+    AttendeeCount TINYINT NOT NULL,
+
+    Intolerances NVARCHAR(500) NULL,
+
+    AdditionalComment NVARCHAR(1000) NULL,
+
+    SubmittedAt DATETIME2 NOT NULL
+        CONSTRAINT DF_RsvpResponses_SubmittedAt
+        DEFAULT SYSUTCDATETIME(),
+
+    UpdatedAt DATETIME2 NOT NULL
+        CONSTRAINT DF_RsvpResponses_UpdatedAt
+        DEFAULT SYSUTCDATETIME(),
+
+    CONSTRAINT UQ_RsvpResponses_InvitationId
+        UNIQUE (InvitationId),
+
+    CONSTRAINT FK_RsvpResponses_Invitations
+        FOREIGN KEY (InvitationId)
+        REFERENCES dbo.Invitations(Id),
+
+    CONSTRAINT CK_RsvpResponses_AttendeeCount
+        CHECK (
+            AttendeeCount BETWEEN 0 AND 20
+        ),
+
+    CONSTRAINT CK_RsvpResponses_Attendance
+        CHECK (
+            (
+                AttendanceConfirmed = 1
+                AND AttendeeCount BETWEEN 1 AND 20
+            )
+            OR
+            (
+                AttendanceConfirmed = 0
+                AND AttendeeCount = 0
+            )
+        )
+);
+
+El archivo completo utiliza además:
+
+IF OBJECT_ID(...) IS NULL
+
+para evitar recrear una tabla que ya exista.
+
+---
+
+# 12. Explicación del esquema
+
+## Id
+
+INT IDENTITY(1,1)
+
+SQL Server genera automáticamente el identificador.
+
+---
+
+## AccessCode
+
+VARCHAR(50)
+
+Los códigos de invitación no necesitan almacenamiento Unicode.
+
+Además:
+
+UNIQUE
+
+impide repetir el mismo código.
+
+---
+
+## NVARCHAR
+
+Se utiliza en los textos introducidos o mostrados a personas para admitir correctamente:
+
+á
+é
+í
+ó
+ú
+ñ
+
+y otros caracteres Unicode.
+
+---
+
+## TINYINT
+
+Se utiliza en:
+
+MaxGuests.
+AttendeeCount.
+
+El proyecto solo admite valores hasta 20, por lo que TINYINT es suficiente.
+
+---
+
+## BIT
+
+Se utiliza para:
+
+IsActive.
+AttendanceConfirmed.
+
+Equivale conceptualmente a:
+
+true / false.
+
+---
+
+## DATETIME2
+
+Se utiliza en:
+
+ExpiresAt.
+CreatedAt.
+UpdatedAt.
+SubmittedAt.
+
+Las fechas internas de Admitionum se interpretan en UTC.
+
+---
+
+## SYSUTCDATETIME()
+
+Los valores predeterminados de creación utilizan UTC directamente desde SQL Server.
+
+---
+
+## InvitationId UNIQUE
+
+Garantiza también desde la base de datos:
+
+Una Invitation
+→ como máximo una RsvpResponse.
+
+---
+
+# 13. Paso 5 — Crear application-prod.properties
+
+Ruta:
+
+src/main/resources/application-prod.properties
+
+Contenido:
+
+spring.datasource.url=${SPRING_DATASOURCE_URL}
+spring.datasource.username=${SPRING_DATASOURCE_USERNAME}
+spring.datasource.password=${SPRING_DATASOURCE_PASSWORD}
+spring.datasource.driver-class-name=com.microsoft.sqlserver.jdbc.SQLServerDriver
+
+spring.jpa.hibernate.ddl-auto=validate
+spring.jpa.show-sql=false
+
+spring.h2.console.enabled=false
+
+app.admin.username=${ADMIN_USERNAME}
+app.admin.password=${ADMIN_PASSWORD}
+
+El archivo no contiene secretos.
+
+Contiene únicamente referencias a variables de entorno.
+
+---
+
+# 14. Explicación de ddl-auto=validate
+
+Producción utiliza:
+
+spring.jpa.hibernate.ddl-auto=validate
+
+Hibernate:
+
+NO crea tablas.
+
+NO elimina tablas.
+
+NO modifica columnas.
+
+Únicamente comprueba:
+
+¿El esquema existente coincide con las entidades?
+
+La responsabilidad queda:
+
+database/schema.sql
+    ↓
+crear estructura.
+
+Hibernate
+    ↓
+validar estructura.
+
+Spring Data JPA
+    ↓
+utilizar estructura.
+
+Esto es diferente del perfil local, donde H2 continúa utilizando una configuración apropiada para desarrollo.
+
+---
+
+# 15. Paso 6 — Mantener H2 para local y test
+
+No se elimina:
+
+src/main/resources/application-local.properties
+
+Tampoco:
+
+src/test/resources/application-test.properties
+
+La separación definitiva queda:
+
+application.properties
+    ↓
+spring.profiles.default=local
+
+LOCAL
+→ H2 persistente.
+
+TEST
+→ H2 en memoria.
+
+PROD
+→ Azure SQL.
+
+La incorporación de Azure SQL no convierte Azure en una dependencia obligatoria para programar o ejecutar tests.
+
+---
+
+# 16. Paso 7 — Configuración de .gitignore
+
+Se mantiene ignorado:
+
+.env
+
+También continúan ignorados:
+
+data/
+*.mv.db
+*.trace.db
+target/
+
+application-prod.properties sí puede almacenarse en GitHub porque no contiene contraseñas reales.
+
+Ejemplo:
+
+spring.datasource.password=${SPRING_DATASOURCE_PASSWORD}
+
+es seguro para versionar.
+
+En cambio:
+
+spring.datasource.password=MiContraseñaReal
+
+no debe existir nunca en GitHub.
+
+---
+
+# 17. Paso 8 — Recursos Azure utilizados
+
+Durante esta fase se utiliza:
+
+Servidor lógico:
+
+admitionum-sql-portfolio
+
+Base de datos:
+
+admitionum
+
+La representación:
+
+admitionum-sql-portfolio/admitionum
+
+significa:
+
+Servidor:
+admitionum-sql-portfolio
+
+    ↓ contiene
+
+Base:
+admitionum
+
+El nombre DNS utilizado para SQL es:
+
+admitionum-sql-portfolio.database.windows.net
+
+Este nombre debe comprobarse desde el Overview de la base antes de construir la conexión.
+
+---
+
+# 18. Paso 9 — Configurar el firewall
+
+Para conectar Spring Boot desde el ordenador local es necesario permitir su IP pública.
+
+Desde:
+
+Azure Portal
+→ SQL server
+→ admitionum-sql-portfolio
+→ Networking
+
+se configura:
+
+Public network access:
+Selected networks.
+
+Después:
+
+Add current client IPv4 address.
+
+Conceptualmente:
+
+Ordenador
+    ↓
+IP pública autorizada
+    ↓
+Firewall de Azure SQL
+    ↓
+Servidor SQL
+
+Autorizar la IP no significa que se pueda acceder sin contraseña.
+
+Son controles diferentes:
+
+Firewall
+→ quién puede intentar establecer la conexión.
+
+Autenticación
+→ quién es el usuario.
+
+Autorización SQL
+→ qué puede hacer ese usuario.
+
+Durante la Fase 15 no es necesario configurar todavía el acceso de Azure Container Apps.
+
+Eso pertenece a la Fase 17.
+
+---
+
+# 19. Paso 10 — Acceder a Query Editor
+
+Desde:
+
+Azure Portal
+→ SQL databases
+→ admitionum
+→ Query editor
+
+se inicia sesión mediante autenticación SQL utilizando inicialmente el administrador SQL del servidor.
+
+Antes de realizar operaciones se ejecuta:
+
+SELECT
+    DB_NAME() AS CurrentDatabase;
+
+Resultado esperado:
+
+CurrentDatabase
+---------------
+admitionum
+
+Si devuelve:
+
+master
+
+no se debe continuar hasta seleccionar correctamente:
+
+admitionum.
+
+Esta comprobación evita crear usuarios o tablas en una base incorrecta.
+
+---
+
+# 20. Paso 11 — Crear las tablas en Azure SQL
+
+Dentro del Query Editor conectado a:
+
+admitionum
+
+se ejecuta el contenido completo de:
+
+database/schema.sql
+
+Después se comprueba:
+
+SELECT
+    TABLE_SCHEMA,
+    TABLE_NAME
+FROM INFORMATION_SCHEMA.TABLES
+WHERE TABLE_NAME IN (
+    'Invitations',
+    'RsvpResponses'
+)
+ORDER BY TABLE_NAME;
+
+Resultado:
+
+dbo    Invitations
+dbo    RsvpResponses
+
+---
+
+# 21. Paso 12 — Comprobar las columnas
+
+Se ejecuta:
+
+SELECT
+    TABLE_NAME,
+    COLUMN_NAME,
+    DATA_TYPE,
+    CHARACTER_MAXIMUM_LENGTH,
+    IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME IN (
+    'Invitations',
+    'RsvpResponses'
+)
+ORDER BY
+    TABLE_NAME,
+    ORDINAL_POSITION;
+
+Se comprueban especialmente:
+
+Invitations.DisplayName
+→ nvarchar(200).
+
+Invitations.MaxGuests
+→ tinyint.
+
+RsvpResponses.GuestName
+→ nvarchar(200).
+
+RsvpResponses.Contact
+→ nvarchar(200).
+
+RsvpResponses.AttendanceConfirmed
+→ bit.
+
+RsvpResponses.AttendeeCount
+→ tinyint.
+
+RsvpResponses.Intolerances
+→ nvarchar(500).
+
+RsvpResponses.AdditionalComment
+→ nvarchar(1000).
+
+SubmittedAt
+→ datetime2.
+
+UpdatedAt
+→ datetime2.
+
+---
+
+# 22. Paso 13 — Comprobar las restricciones
+
+Consulta:
+
+SELECT
+    TABLE_NAME,
+    CONSTRAINT_NAME,
+    CONSTRAINT_TYPE
+FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+WHERE TABLE_NAME IN (
+    'Invitations',
+    'RsvpResponses'
+)
+ORDER BY
+    TABLE_NAME,
+    CONSTRAINT_TYPE,
+    CONSTRAINT_NAME;
+
+Deben existir restricciones equivalentes a:
+
+PK_Invitations.
+
+UQ_Invitations_AccessCode.
+
+CK_Invitations_MaxGuests.
+
+PK_RsvpResponses.
+
+UQ_RsvpResponses_InvitationId.
+
+FK_RsvpResponses_Invitations.
+
+CK_RsvpResponses_AttendeeCount.
+
+CK_RsvpResponses_Attendance.
+
+---
+
+# 23. Paso 14 — Crear el usuario admitionum_app
+
+El usuario se crea DENTRO de:
+
+admitionum.
+
+No se crea desde IAM.
+
+No se crea desde Microsoft Entra ID.
+
+No se crea como un nuevo recurso Azure.
+
+Desde Query Editor, conectado como administrador a la base:
+
+admitionum
+
+se ejecuta:
+
+CREATE USER [admitionum_app]
+WITH PASSWORD = 'CONTRASENA-SEGURA';
+
+La contraseña utilizada no debe almacenarse en:
+
+schema.sql.
+
+README.md.
+
+application-prod.properties.
+
+GitHub.
+
+Después se conceden permisos:
+
+ALTER ROLE db_datareader
+ADD MEMBER [admitionum_app];
+
+ALTER ROLE db_datawriter
+ADD MEMBER [admitionum_app];
+
+GRANT VIEW DEFINITION
+TO [admitionum_app];
+
+---
+
+# 24. Explicación de los permisos
+
+db_datareader:
+
+Permite leer datos.
+
+Conceptualmente:
+
+SELECT.
+
+db_datawriter:
+
+Permite modificar datos.
+
+Conceptualmente:
+
+INSERT.
+UPDATE.
+DELETE.
+
+VIEW DEFINITION:
+
+Permite consultar metadatos del esquema necesarios para tareas como la validación de Hibernate.
+
+admitionum_app no se convierte en administrador.
+
+La aplicación tampoco utilizará permanentemente el usuario administrador utilizado para configurar Azure.
+
+---
+
+# 25. Paso 15 — Comprobar admitionum_app
+
+Consulta:
+
+SELECT
+    name,
+    type_desc
+FROM sys.database_principals
+WHERE name = 'admitionum_app';
+
+Debe aparecer:
+
+admitionum_app
+
+como usuario SQL dentro de la base.
+
+Esto confirma que:
+
+admitionum_app
+
+no es una identidad global del portal Azure.
+
+Es un usuario interno de:
+
+admitionum.
+
+---
+
+# 26. Paso 16 — Construir la conexión JDBC
+
+Servidor:
+
+admitionum-sql-portfolio.database.windows.net
+
+Puerto:
+
+1433
+
+Base:
+
+admitionum
+
+Usuario:
+
+admitionum_app
+
+Cadena:
+
+jdbc:sqlserver://admitionum-sql-portfolio.database.windows.net:1433;databaseName=admitionum;encrypt=true;trustServerCertificate=false;loginTimeout=30;
+
+Partes:
+
+jdbc:sqlserver://
+
+→ protocolo JDBC para SQL Server.
+
+admitionum-sql-portfolio.database.windows.net
+
+→ servidor.
+
+1433
+
+→ puerto SQL.
+
+databaseName=admitionum
+
+→ base de datos.
+
+encrypt=true
+
+→ conexión cifrada.
+
+trustServerCertificate=false
+
+→ se valida el certificado presentado por el servidor.
+
+loginTimeout=30
+
+→ límite de tiempo para establecer el login.
+
+Esta cadena no se introduce en el navegador.
+
+La utiliza Java.
+
+---
+
+# 27. Paso 17 — Comprobar conectividad TCP
+
+Antes de culpar a Spring Boot de un fallo de conexión se puede comprobar desde PowerShell:
+
+Test-NetConnection `
+    -ComputerName admitionum-sql-portfolio.database.windows.net `
+    -Port 1433
+
+Resultado correcto:
+
+TcpTestSucceeded : True
+
+Esta prueba solo comprueba:
+
+PC
+→ servidor
+→ puerto 1433.
+
+No comprueba:
+
+contraseña.
+
+usuario.
+
+permisos.
+
+Hibernate.
+
+tablas.
+
+---
+
+# 28. Paso 18 — Configurar variables en PowerShell
+
+Desde una terminal PowerShell nueva:
+
+$env:SPRING_PROFILES_ACTIVE="prod"
+
+$env:SPRING_DATASOURCE_URL="jdbc:sqlserver://admitionum-sql-portfolio.database.windows.net:1433;databaseName=admitionum;encrypt=true;trustServerCertificate=false;loginTimeout=30;"
+
+$env:SPRING_DATASOURCE_USERNAME="admitionum_app"
+
+$env:SPRING_DATASOURCE_PASSWORD='CONTRASENA_SQL_REAL'
+
+$env:ADMIN_USERNAME="USUARIO_ADMIN"
+
+$env:ADMIN_PASSWORD='CONTRASENA_ADMIN_REAL'
+
+No se deben mostrar ni copiar las contraseñas en:
+
+capturas.
+
+README.
+
+commits.
+
+documentación.
+
+La contraseña SQL y la contraseña del panel son conceptos diferentes.
+
+SPRING_DATASOURCE_PASSWORD:
+
+→ Azure SQL.
+
+ADMIN_PASSWORD:
+
+→ Spring Security.
+
+---
+
+# 29. Equivalente en Git Bash
+
+export SPRING_PROFILES_ACTIVE='prod'
+
+export SPRING_DATASOURCE_URL='jdbc:sqlserver://admitionum-sql-portfolio.database.windows.net:1433;databaseName=admitionum;encrypt=true;trustServerCertificate=false;loginTimeout=30;'
+
+export SPRING_DATASOURCE_USERNAME='admitionum_app'
+
+export SPRING_DATASOURCE_PASSWORD='CONTRASENA_SQL_REAL'
+
+export ADMIN_USERNAME='USUARIO_ADMIN'
+
+export ADMIN_PASSWORD='CONTRASENA_ADMIN_REAL'
+
+No es necesario imprimir las contraseñas para comprobarlas.
+
+---
+
+# 30. Paso 19 — Ejecutar Spring Boot contra Azure SQL
+
+Desde la raíz del proyecto:
+
+PowerShell:
+
+.\mvnw.cmd spring-boot:run
+
+Git Bash:
+
+./mvnw spring-boot:run
+
+Spring Boot debe utilizar:
+
+perfil prod.
+
+El flujo esperado es:
+
+Spring Boot
+    ↓
+application-prod.properties
+    ↓
+SPRING_DATASOURCE_URL
+    ↓
+Microsoft JDBC Driver
+    ↓
+Firewall
+    ↓
+admitionum_app
+    ↓
+Azure SQL
+    ↓
+Hibernate validate
+    ↓
+Started AdmitionumApplication
+
+No se espera que Hibernate cree ninguna tabla.
+
+Las tablas ya deben existir.
+
+---
+
+# 31. Paso 20 — Comprobar el endpoint de salud
+
+Con la aplicación arrancada contra Azure:
+
+http://localhost:8080/api/public/health
+
+Debe continuar funcionando.
+
+Esto demuestra que la aplicación completa ha podido arrancar con:
+
+SPRING_PROFILES_ACTIVE=prod
+
+y con Azure SQL configurado como DataSource.
+
+---
+
+# 32. Paso 21 — Comprobar administración
+
+Abrir:
+
+http://localhost:8080/admin/
+
+Iniciar sesión utilizando:
+
+ADMIN_USERNAME.
+
+ADMIN_PASSWORD.
+
+El panel debe poder cargar utilizando ahora los datos de:
+
+Azure SQL.
+
+Si la base todavía no contiene invitaciones, es correcto que sus métricas sean cero.
+
+No es necesario cargar datos ficticios en la base de producción para considerar terminada la conexión.
+
+---
+
+# 33. Datos de demostración
+
+Los datos de demostración continúan perteneciendo únicamente al entorno local.
+
+No se cargan automáticamente en producción:
+
+DEMO-FAMILY-001.
+
+DEMO-GUEST-002.
+
+DEMO-COUPLE-003.
+
+La separación deseada es:
+
+LOCAL
+→ datos ficticios.
+
+PROD
+→ estructura real, inicialmente vacía si todavía no se han introducido invitaciones.
+
+---
+
+# 34. Paso 22 — Volver a comprobar el perfil local
+
+Después de detener la aplicación:
+
+Ctrl + C
+
+se elimina SPRING_PROFILES_ACTIVE o se abre una terminal limpia.
+
+Al ejecutar:
+
+PowerShell:
+
+.\mvnw.cmd spring-boot:run
+
+Git Bash:
+
+./mvnw spring-boot:run
+
+sin especificar prod, debe utilizarse:
+
+perfil local.
+
+Base:
+
+jdbc:h2:file:./data/admitionum
+
+Azure SQL no sustituye H2 para desarrollo.
+
+---
+
+# 35. Paso 23 — Ejecutar todas las pruebas
+
+La aplicación debe estar detenida.
+
+PowerShell:
+
+.\mvnw.cmd clean test
+
+Git Bash:
+
+./mvnw clean test
+
+Las pruebas deben seguir utilizando:
+
+perfil test.
+
+Base:
+
+jdbc:h2:mem:admitionum-test
+
+No deben conectarse a Azure SQL.
+
+Resultado obligatorio:
+
+Failures: 0.
+Errors: 0.
+BUILD SUCCESS.
+
+---
+
+# 36. Seguridad aplicada
+
+La configuración final respeta:
+
+El navegador nunca recibe la contraseña SQL.
+
+El frontend nunca se conecta directamente a Azure SQL.
+
+Las credenciales SQL no aparecen en Java.
+
+Las credenciales SQL no aparecen en JavaScript.
+
+Las credenciales SQL no aparecen en GitHub.
+
+application-prod.properties no contiene secretos.
+
+El administrador SQL no es utilizado como usuario permanente de la aplicación.
+
+Spring Boot utiliza:
+
+admitionum_app.
+
+admitionum_app dispone únicamente de los permisos necesarios.
+
+El firewall controla qué IP puede alcanzar el servidor.
+
+La conexión JDBC está cifrada.
+
+Hibernate no modifica automáticamente el esquema de producción.
+
+---
+
+# 37. Errores habituales y soluciones
+
+## Error: Client with IP address ... is not allowed
+
+Causa:
+
+La IP pública del ordenador no está incluida en las reglas del firewall.
+
+Solución:
+
+Azure SQL server
+→ Networking
+→ Add current client IPv4 address
+→ Save.
+
+---
+
+## Error: TcpTestSucceeded : False
+
+Comprobar:
+
+El nombre del servidor.
+
+La conexión a Internet.
+
+Las reglas del firewall.
+
+El puerto 1433.
+
+No modificar todavía el código Java.
+
+---
+
+## Error: Login failed for user 'admitionum_app'
+
+Comprobar:
+
+Que el usuario se creó dentro de:
+
+admitionum.
+
+Que el nombre sea exactamente:
+
+admitionum_app.
+
+Que la contraseña sea correcta.
+
+Que:
+
+databaseName=admitionum.
+
+Que:
+
+SPRING_DATASOURCE_USERNAME
+
+y:
+
+SPRING_DATASOURCE_PASSWORD
+
+contengan los valores correctos.
+
+---
+
+## Error: Invalid object name 'Invitations'
+
+Comprobar que:
+
+database/schema.sql
+
+se ejecutó sobre:
+
+admitionum
+
+y no sobre:
+
+master.
+
+Consulta:
+
+SELECT DB_NAME();
+
+Debe devolver:
+
+admitionum.
+
+---
+
+## Error: Schema-validation: missing table
+
+Consultar:
+
+SELECT
+    TABLE_SCHEMA,
+    TABLE_NAME
+FROM INFORMATION_SCHEMA.TABLES;
+
+Deben existir:
+
+dbo.Invitations.
+
+dbo.RsvpResponses.
+
+---
+
+## Error: wrong column type encountered
+
+Comprobar:
+
+Invitation.maxGuests:
+
+@JdbcTypeCode(SqlTypes.TINYINT)
+
+RsvpResponse.attendeeCount:
+
+@JdbcTypeCode(SqlTypes.TINYINT)
+
+DisplayName:
+
+@Nationalized
+
+GuestName:
+
+@Nationalized
+
+Contact:
+
+@Nationalized
+
+Intolerances:
+
+@Nationalized
+
+AdditionalComment:
+
+@Nationalized
+
+No cambiar las columnas Azure a INT o VARCHAR simplemente para ocultar un error de mapeo.
+
+---
+
+## Error relacionado con certificado TLS
+
+La cadena debe conservar:
+
+encrypt=true
+
+trustServerCertificate=false
+
+No se debe solucionar desactivando arbitrariamente la validación del certificado.
+
+---
+
+## Spring Boot sigue utilizando H2
+
+Comprobar:
+
+SPRING_PROFILES_ACTIVE
+
+Para Azure debe ser:
+
+prod
+
+El inicio de Spring debe confirmar el perfil activo.
+
+---
+
+## Query Editor funciona pero Spring no conecta
+
+Esto permite separar el problema.
+
+Si Query Editor funciona:
+
+Base creada
+→ correcto.
+
+Credenciales administrativas
+→ correctas.
+
+Esquema
+→ creado.
+
+Después revisar:
+
+Firewall para la IP local.
+
+admitionum_app.
+
+Cadena JDBC.
+
+Variables de entorno.
+
+Driver JDBC.
+
+Hibernate validate.
+
+No modificar varias configuraciones simultáneamente.
+
+---
+
+# 38. Resultado estructural esperado
+
+Al terminar:
+
+admitionum/
+├── database/
+│   └── schema.sql
+│
+├── src/
+│   └── main/
+│       ├── java/
+│       │   └── nc/
+│       │       └── admitionum/
+│       │           └── model/
+│       │               ├── Invitation.java
+│       │               └── RsvpResponse.java
+│       │
+│       └── resources/
+│           ├── application.properties
+│           ├── application-local.properties
+│           └── application-prod.properties
+│
+├── pom.xml
+├── .gitignore
+└── ...
+
+No debe existir todavía:
+
+Dockerfile.
+
+.dockerignore.
+
+Configuración de Azure Container Apps.
+
+.github/workflows/deploy.yml correspondiente al despliegue final.
+
+---
+
+# 39. Revisión de Git
+
+Comprobar:
+
+git status
+
+git diff
+
+Los cambios principales de la fase corresponden a:
+
+pom.xml.
+
+Invitation.java.
+
+RsvpResponse.java.
+
+application-prod.properties.
+
+database/schema.sql.
+
+.gitignore.
+
+No deben aparecer:
+
+.env.
+
+contraseñas.
+
+data/.
+
+*.mv.db.
+
+*.trace.db.
+
+target/.
+
+Una comprobación útil:
+
+git grep -n "password"
+
+Es normal encontrar referencias como:
+
+${SPRING_DATASOURCE_PASSWORD}
+
+${ADMIN_PASSWORD}
+
+No debe aparecer ninguna contraseña real.
+
+---
+
+# 40. Commits recomendados
+
+La fase puede dividirse en commits pequeños.
+
+Ejemplo:
+
+git add pom.xml
+git add src/main/java/nc/admitionum/model/Invitation.java
+git add src/main/java/nc/admitionum/model/RsvpResponse.java
+
+git commit -m "feat: add Azure SQL persistence support"
+
+Configuración:
+
+git add .gitignore
+git add src/main/resources/application-prod.properties
+git add database/schema.sql
+
+git commit -m "config: add Azure SQL production profile"
+
+Corrección detectada durante la fase:
+
+git add src/main/java/nc/admitionum/model/RsvpResponse.java
+
+git commit -m "fix: map attendee count as SQL tinyint"
+
+Subida:
+
+git push -u origin Phase15
+
+No se deben almacenar contraseñas en ningún commit.
+
+---
+
+# 41. Criterios de finalización de la Fase 15
+
+La fase estará cerrada cuando:
+
+[✓] La Fase 14 figura como completada.
+
+[✓] La rama Phase15 parte del proyecto actualizado.
+
+[✓] Spring Boot continúa en 4.1.0.
+
+[✓] Java continúa en 25.
+
+[✓] Maven continúa siendo el gestor del proyecto.
+
+[✓] Existe la dependencia mssql-jdbc.
+
+[✓] H2 continúa disponible para local.
+
+[✓] H2 continúa disponible para test.
+
+[✓] Invitation.displayName utiliza mapeo Unicode.
+
+[✓] Invitation.maxGuests continúa siendo Integer.
+
+[✓] Invitation.maxGuests utiliza SqlTypes.TINYINT.
+
+[✓] RsvpResponse.guestName utiliza mapeo Unicode.
+
+[✓] RsvpResponse.contact utiliza mapeo Unicode.
+
+[✓] RsvpResponse.attendeeCount continúa siendo Integer.
+
+[✓] RsvpResponse.attendeeCount utiliza SqlTypes.TINYINT.
+
+[✓] Se eliminó el uso incorrecto de @Nationalized en AttendeeCount.
+
+[✓] RsvpResponse.intolerances utiliza mapeo Unicode.
+
+[✓] RsvpResponse.additionalComment utiliza mapeo Unicode.
+
+[✓] AccessCode continúa correspondiéndose con VARCHAR.
+
+[✓] Existe database/schema.sql.
+
+[✓] Existe dbo.Invitations.
+
+[✓] Existe dbo.RsvpResponses.
+
+[✓] MaxGuests utiliza TINYINT.
+
+[✓] MaxGuests admite 1..20.
+
+[✓] AttendeeCount utiliza TINYINT.
+
+[✓] AttendeeCount admite 0..20.
+
+[✓] Se mantiene la regla asistencia/número de asistentes.
+
+[✓] InvitationId es UNIQUE.
+
+[✓] InvitationId tiene FK hacia Invitations.Id.
+
+[✓] Los textos personales utilizan NVARCHAR.
+
+[✓] Las fechas SQL utilizan DATETIME2.
+
+[✓] Los valores automáticos utilizan SYSUTCDATETIME().
+
+[✓] Existe application-prod.properties.
+
+[✓] application-prod.properties no contiene secretos reales.
+
+[✓] .env continúa ignorado.
+
+[✓] El servidor Azure SQL existe.
+
+[✓] El servidor es admitionum-sql-portfolio.
+
+[✓] La base Azure SQL se llama admitionum.
+
+[✓] El firewall permite la conexión necesaria desde desarrollo.
+
+[✓] Query Editor se conecta a admitionum.
+
+[✓] SELECT DB_NAME() identifica admitionum.
+
+[✓] schema.sql se ha ejecutado correctamente.
+
+[✓] Las columnas se han comprobado mediante INFORMATION_SCHEMA.
+
+[✓] Se creó admitionum_app dentro de la base admitionum.
+
+[✓] admitionum_app no es administrador.
+
+[✓] admitionum_app pertenece a db_datareader.
+
+[✓] admitionum_app pertenece a db_datawriter.
+
+[✓] admitionum_app dispone de VIEW DEFINITION.
+
+[✓] La cadena JDBC utiliza el servidor correcto.
+
+[✓] La conexión utiliza el puerto 1433.
+
+[✓] La cadena selecciona databaseName=admitionum.
+
+[✓] La conexión utiliza encrypt=true.
+
+[✓] La conexión utiliza trustServerCertificate=false.
+
+[✓] SPRING_DATASOURCE_URL está fuera del código.
+
+[✓] SPRING_DATASOURCE_USERNAME está fuera del código.
+
+[✓] SPRING_DATASOURCE_PASSWORD está fuera del código.
+
+[✓] ADMIN_USERNAME está fuera del código.
+
+[✓] ADMIN_PASSWORD está fuera del código.
+
+[✓] Spring Boot puede arrancar con el perfil prod.
+
+[✓] Microsoft JDBC Driver conecta con Azure SQL.
+
+[✓] Hibernate valida correctamente el esquema.
+
+[✓] /api/public/health continúa funcionando.
+
+[✓] /admin/ continúa funcionando con el perfil prod.
+
+[✓] No se cargan automáticamente datos demo en producción.
+
+[✓] El perfil local continúa utilizando H2 persistente.
+
+[✓] Las pruebas continúan utilizando H2 en memoria.
+
+[✓] mvnw clean test termina con BUILD SUCCESS.
+
+[✓] No se ha creado Dockerfile.
+
+[✓] No se ha desplegado Azure Container Apps.
+
+[✓] No se ha creado todavía el flujo final de GitHub Actions.
+
+[✓] No existen secretos en Git.
+
+[✓] La Fase 15 se ha subido a GitHub.
+
+La integración de Phase15 en main debe registrarse como completada
+únicamente cuando el merge o pull request correspondiente se haya
+realizado realmente.
+
+---
+
+# 42. Texto para el registro de trazabilidad
+
+Añade este bloque una vez verificadas todas las comprobaciones de la fase:
+
+Fase 15 — Conexión con Azure SQL Database
+
+Estado: completada.
+
+Objetivo:
+Incorporar Azure SQL Database como base de datos de producción
+de Admitionum manteniendo H2 como base local y de pruebas.
+
+Configuración mantenida:
+- Java 25.
+- Spring Boot 4.1.0.
+- Maven.
+- Paquete raíz nc.admitionum.
+- Spring Data JPA.
+- H2 para local.
+- H2 en memoria para test.
+- Spring Security para administración.
+
+Dependencias:
+- Se añadió Microsoft JDBC Driver for SQL Server.
+- El driver utiliza scope runtime.
+- No se fijó manualmente una versión del driver.
+
+Entidades:
+- Invitation.displayName se mapea como texto nacionalizado.
+- Invitation.maxGuests continúa siendo Integer.
+- MaxGuests utiliza SqlTypes.TINYINT.
+- RsvpResponse.guestName se mapea como texto nacionalizado.
+- RsvpResponse.contact se mapea como texto nacionalizado.
+- RsvpResponse.attendeeCount continúa siendo Integer.
+- AttendeeCount utiliza SqlTypes.TINYINT.
+- RsvpResponse.intolerances se mapea como texto nacionalizado.
+- RsvpResponse.additionalComment se mapea como texto
+  nacionalizado.
+
+Corrección:
+- Durante la fase se detectó que AttendeeCount había sido
+  anotado incorrectamente mediante @Nationalized.
+- Se eliminó esa anotación del campo numérico.
+- Se sustituyó por @JdbcTypeCode(SqlTypes.TINYINT).
+
+Esquema de producción:
+- Se creó database/schema.sql.
+- Se creó dbo.Invitations.
+- Se creó dbo.RsvpResponses.
+- AccessCode utiliza VARCHAR(50).
+- DisplayName utiliza NVARCHAR(200).
+- MaxGuests utiliza TINYINT.
+- MaxGuests admite valores 1..20.
+- IsActive utiliza BIT.
+- GuestName utiliza NVARCHAR(200).
+- Contact utiliza NVARCHAR(200).
+- AttendanceConfirmed utiliza BIT.
+- AttendeeCount utiliza TINYINT.
+- AttendeeCount admite valores 0..20.
+- Intolerances utiliza NVARCHAR(500).
+- AdditionalComment utiliza NVARCHAR(1000).
+- Las fechas utilizan DATETIME2.
+- Los defaults temporales utilizan SYSUTCDATETIME().
+- InvitationId es único.
+- Existe una clave foránea desde RsvpResponses hacia
+  Invitations.
+- Se mantiene la restricción entre confirmación de asistencia y
+  número de asistentes.
+
+Producción:
+- Se creó application-prod.properties.
+- Spring Boot obtiene la conexión mediante variables de entorno.
+- Hibernate utiliza ddl-auto=validate.
+- Hibernate no crea ni modifica el esquema de producción.
+- La consola H2 está desactivada en producción.
+
+Azure:
+- Servidor lógico: admitionum-sql-portfolio.
+- Base de datos: admitionum.
+- Endpoint SQL:
+  admitionum-sql-portfolio.database.windows.net.
+- Se configuró el firewall para permitir la conexión necesaria
+  desde el entorno de desarrollo.
+- Query Editor se utilizó directamente sobre admitionum.
+- Se comprobó la base activa mediante DB_NAME().
+- Se ejecutó database/schema.sql sobre admitionum.
+- Se comprobaron tablas, columnas, tipos y restricciones.
+
+Usuario SQL:
+- Se creó admitionum_app dentro de la base admitionum.
+- admitionum_app no es una identidad de Azure ni un usuario IAM.
+- admitionum_app no es administrador.
+- Se concedió db_datareader.
+- Se concedió db_datawriter.
+- Se concedió VIEW DEFINITION.
+- La aplicación no utiliza permanentemente el administrador SQL.
+
+Conexión:
+- Se utiliza Microsoft JDBC Driver.
+- Puerto: 1433.
+- Database name: admitionum.
+- encrypt=true.
+- trustServerCertificate=false.
+- La dirección JDBC no es una URL web y no debe abrirse en un
+  navegador.
+
+Variables:
+- SPRING_PROFILES_ACTIVE=prod.
+- SPRING_DATASOURCE_URL.
+- SPRING_DATASOURCE_USERNAME.
+- SPRING_DATASOURCE_PASSWORD.
+- ADMIN_USERNAME.
+- ADMIN_PASSWORD.
+- Ninguna contraseña real se almacena en GitHub.
+
+Verificación:
+- Spring Boot arranca con el perfil prod.
+- HikariCP establece la conexión con Azure SQL.
+- Hibernate valida correctamente el esquema.
+- Admitionum termina su arranque correctamente.
+- /api/public/health continúa funcionando.
+- /admin/ continúa funcionando.
+- La base de producción puede permanecer inicialmente sin datos
+  demo.
+- El perfil local continúa utilizando H2 persistente.
+- El perfil test continúa utilizando H2 en memoria.
+- mvnw clean test finaliza con BUILD SUCCESS.
+
+Aclaraciones aprendidas:
+- admitionum_app se crea dentro de la base mediante SQL.
+- No se crea desde IAM ni Microsoft Entra ID.
+- El nombre *.database.windows.net representa un servidor SQL,
+  no una página web.
+- La cadena jdbc:sqlserver://... es utilizada por Java y no por
+  el navegador.
+- El firewall, la autenticación y los permisos SQL son tres
+  controles diferentes.
+- Autorizar una IP no elimina la necesidad de credenciales.
+- La aplicación debe utilizar un usuario limitado y no el
+  administrador SQL.
+- H2 se conserva para evitar depender de Azure durante desarrollo
+  y pruebas.
+
+Elementos no desarrollados:
+- Docker.
+- Dockerfile.
+- Azure Container Apps.
+- Despliegue de la aplicación.
+- GitHub Actions final.
+- Managed Identity.
+- Microsoft Entra ID.
+- Key Vault.
+- Infraestructura como código.
+
+Commits de la fase:
+- feat: add Azure SQL persistence support
+- config: add Azure SQL production profile
+- fix: map attendee count as SQL tinyint
+
+Siguiente fase:
+- Fase 16 — Crear Docker.
+
+---
+
+# 43. Estado de la fase
+
+Fase 15 — Conectar Azure SQL Database:
+
+COMPLETADA.
+
+Resultado:
+
+LOCAL
+→ perfil local
+→ H2 persistente.
+
+TEST
+→ perfil test
+→ H2 en memoria.
+
+PROD
+→ perfil prod
+→ Microsoft JDBC Driver
+→ Azure SQL Database.
+
+La incorporación de Azure SQL se ha realizado sin modificar la
+arquitectura monolítica ni las reglas de negocio de Admitionum.
+
+---
+
+# 44. Siguiente fase
+
+Según el Documento Maestro:
+
+Fase 16 — Crear Docker.
+
+La Fase 16 deberá centrarse exclusivamente en:
+
+- Comprender qué problema resuelve Docker.
+- Crear Dockerfile.
+- Crear .dockerignore.
+- Compilar el JAR de Admitionum.
+- Construir una imagen.
+- Ejecutar la imagen localmente.
+- Configurar variables de entorno al ejecutar el contenedor.
+- Verificar el perfil local cuando corresponda.
+- Verificar el perfil prod sin almacenar secretos en la imagen.
+- Probar el endpoint de salud desde el contenedor.
+- Probar el panel administrativo.
+- Ejecutar las pruebas Maven independientemente.
+- Documentar errores habituales.
+- Crear commits pequeños.
+
+No deberá desplegarse todavía:
+
+Azure Container Apps.
+
+Eso pertenece a:
+
+Fase 17.
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 16
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
