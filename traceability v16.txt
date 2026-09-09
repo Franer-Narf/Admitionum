@@ -138,11 +138,11 @@ Forma de ayudarme:
 
 Estado actual completado:
 
-Fase 15
+Fase 16
 
 Fase que quiero desarrollar:
 
-Fase 16
+Fase 17
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
@@ -36423,5 +36423,3086 @@ Fase 17.
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
 Fase 16
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+# Fase 16 — Crear Docker para Admitionum
+
+He revisado la trazabilidad v15 y el estado actual del repositorio antes de definir esta fase.
+
+La configuración válida sigue siendo **Admitionum v1.1, Java 25, Spring Boot 4.1.0, Maven, arquitectura monolítica, H2 para local/test y Azure SQL para producción**. 
+
+Además, la Fase 15 está registrada como completada: conexión real con Azure SQL, perfil `prod`, usuario SQL limitado `admitionum_app`, Hibernate con `ddl-auto=validate`, pruebas correctas y ausencia todavía de Docker y Azure Container Apps. 
+
+También he comprobado GitHub: **Phase15 ya está integrada en `main` mediante el PR #13**, por lo que no tenemos que seguir trabajando sobre la rama Phase15.
+
+Por tanto:
+
+```text
+Fases 1–15: COMPLETADAS
+Fase 16: Crear Docker ← fase actual
+Fase 17: Azure Container Apps ← todavía NO
+```
+
+Esto coincide exactamente con el cierre de la trazabilidad, que define como siguiente trabajo crear `Dockerfile`, `.dockerignore`, compilar el JAR, construir y ejecutar la imagen, probar los perfiles y verificar la aplicación sin desplegar todavía Container Apps. 
+
+---
+
+# 1. Objetivo de la Fase 16
+
+Hasta ahora tienes esto:
+
+```text
+TU ORDENADOR
+│
+├── Java 25
+├── Maven
+├── Spring Boot
+└── Admitionum
+        │
+        ├── perfil local → H2
+        │
+        └── perfil prod  → Azure SQL
+```
+
+El problema es que la aplicación depende de que el ordenador donde se ejecute tenga un entorno adecuado.
+
+Docker permitirá empaquetar:
+
+```text
+┌───────────────────────────────────┐
+│ Imagen Docker de Admitionum       │
+│                                   │
+│  Java 25                          │
+│        +                          │
+│  admitionum-0.0.1-SNAPSHOT.jar    │
+│        +                          │
+│  instrucciones de ejecución       │
+└───────────────────────────────────┘
+```
+
+Después podrás ejecutar exactamente esa imagen:
+
+```text
+Ahora:
+Tu PC
+  ↓
+Docker
+  ↓
+Admitionum
+
+Fase 17:
+Azure Container Apps
+  ↓
+misma imagen Docker
+  ↓
+Admitionum
+```
+
+Esta es una de las ideas más importantes de Docker:
+
+> **No vamos a crear otra versión de Admitionum. Vamos a empaquetar la aplicación que ya funciona.**
+
+---
+
+# 2. Alcance exacto
+
+En esta fase haremos únicamente:
+
+1. Comprobar que Docker funciona en Windows.
+2. Crear la rama `Phase16`.
+3. Ejecutar las pruebas Maven antes de tocar Docker.
+4. Generar el JAR de Admitionum.
+5. Crear `Dockerfile`.
+6. Crear `.dockerignore`.
+7. Construir la imagen Docker.
+8. Ejecutarla con el perfil `local`.
+9. Probar `/api/public/health`.
+10. Probar la web pública.
+11. Probar `/admin/`.
+12. Ejecutar la imagen con el perfil `prod`.
+13. Pasar las credenciales mediante variables de entorno.
+14. Verificar la conexión desde el contenedor a Azure SQL.
+15. Confirmar que ningún secreto forma parte de la imagen.
+16. Ejecutar de nuevo todas las pruebas Maven.
+17. Crear el commit de la fase.
+18. Subir `Phase16` a GitHub.
+
+La trazabilidad de Fase 15 establece expresamente estos objetivos. 
+
+---
+
+# 3. Lo que NO haremos
+
+No crearemos todavía:
+
+```text
+Azure Container Apps
+Azure Container Registry
+GitHub Actions
+docker-compose.yml
+Kubernetes
+AKS
+Microservicios
+Managed Identity
+Key Vault
+Microsoft Entra ID
+```
+
+Tampoco modificaremos:
+
+```text
+Invitation.java
+RsvpResponse.java
+Controladores
+Servicios
+Repositorios
+DTO
+Spring Security
+HTML
+CSS
+JavaScript
+database/schema.sql
+application-prod.properties
+pom.xml
+```
+
+La Fase 17 será la responsable del despliegue en Azure Container Apps. 
+
+---
+
+# 4. Estado técnico que vamos a empaquetar
+
+El `pom.xml` actual confirma:
+
+```text
+artifactId: admitionum
+version: 0.0.1-SNAPSHOT
+Java: 25
+Spring Boot: 4.1.0
+```
+
+y ya contiene tanto H2 como Microsoft JDBC Driver.
+
+Por tanto, Maven generará principalmente:
+
+```text
+target/admitionum-0.0.1-SNAPSHOT.jar
+```
+
+Ese archivo es la aplicación Spring Boot ejecutable que introduciremos en la imagen.
+
+Conceptualmente:
+
+```text
+Código fuente
+    │
+    │ Maven
+    ▼
+admitionum-0.0.1-SNAPSHOT.jar
+    │
+    │ Docker
+    ▼
+Imagen admitionum
+    │
+    │ docker run
+    ▼
+Contenedor
+```
+
+---
+
+# 5. Diferencia entre imagen y contenedor
+
+Es importante entender estos dos términos antes de continuar.
+
+## Imagen
+
+Es el paquete preparado:
+
+```text
+admitionum:phase16
+```
+
+Piensa en ella como una plantilla que contiene:
+
+```text
+Java 25
++
+Admitionum
++
+Cómo arrancarlo
+```
+
+La imagen no está ejecutándose.
+
+## Contenedor
+
+Es una ejecución concreta de esa imagen:
+
+```text
+Imagen
+   ↓
+docker run
+   ↓
+Contenedor funcionando
+```
+
+Puedes crear, detener y eliminar contenedores sin eliminar la imagen original.
+
+Por ejemplo:
+
+```text
+admitionum:phase16          ← imagen
+
+       │
+       ├── admitionum-local      ← contenedor
+       │
+       └── admitionum-prod-test  ← otro contenedor
+```
+
+Ambos pueden proceder de la misma imagen.
+
+La diferencia será únicamente la configuración que les pasemos al arrancar.
+
+---
+
+# 6. Paso 0 — Preparar Git
+
+Como `main` ya contiene Phase15, partiremos de `main`.
+
+Desde la carpeta donde se encuentra `pom.xml`:
+
+```bash
+git status
+```
+
+Debes tener el árbol limpio.
+
+Después:
+
+```bash
+git switch main
+git pull
+```
+
+Y crea:
+
+```bash
+git switch -c Phase16
+```
+
+Comprueba:
+
+```bash
+git branch --show-current
+```
+
+Resultado:
+
+```text
+Phase16
+```
+
+### Si ya hubieras creado la rama
+
+No vuelvas a crearla:
+
+```bash
+git switch Phase16
+```
+
+---
+
+# 7. Paso 1 — Verificar Docker
+
+En Windows utilizaremos **Docker Desktop con contenedores Linux**.
+
+No necesitas instalar Java dentro de Docker Desktop. Precisamente la imagen contendrá el Java que necesita Admitionum.
+
+Abre Docker Desktop y espera a que el motor esté iniciado.
+
+Después, desde PowerShell:
+
+```powershell
+docker --version
+```
+
+Deberías obtener algo parecido a:
+
+```text
+Docker version ...
+```
+
+Comprueba también el motor:
+
+```powershell
+docker info
+```
+
+Si funciona, realiza una prueba completamente independiente de Admitionum:
+
+```powershell
+docker run --rm hello-world
+```
+
+Docker descargará una pequeña imagen de prueba y debería mostrar un mensaje indicando que la instalación funciona.
+
+## Qué significa `--rm`
+
+```text
+--rm
+```
+
+indica:
+
+> Cuando el contenedor termine, elimínalo automáticamente.
+
+No elimina la imagen descargada.
+
+---
+
+# 8. Prueba de control antes de modificar el proyecto
+
+Antes de crear `Dockerfile`:
+
+### PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+### Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Debe terminar con:
+
+```text
+BUILD SUCCESS
+```
+
+Esto es muy importante.
+
+Si después de introducir Docker ocurre un problema, sabremos que la aplicación funcionaba antes.
+
+La Fase 15 terminó precisamente conservando `mvnw clean test` con `BUILD SUCCESS`. 
+
+---
+
+# 9. Paso 2 — Compilar Admitionum
+
+Ahora generaremos el JAR.
+
+### PowerShell
+
+```powershell
+.\mvnw.cmd clean package
+```
+
+### Git Bash
+
+```bash
+./mvnw clean package
+```
+
+Maven realizará aproximadamente:
+
+```text
+Compilar Java
+    ↓
+Ejecutar tests
+    ↓
+Empaquetar Spring Boot
+    ↓
+Crear JAR
+```
+
+Resultado esperado:
+
+```text
+BUILD SUCCESS
+```
+
+---
+
+# 10. Comprobar el JAR
+
+### PowerShell
+
+```powershell
+Get-ChildItem .\target\*.jar
+```
+
+### Git Bash
+
+```bash
+ls -lh target/*.jar
+```
+
+Debes localizar:
+
+```text
+target/admitionum-0.0.1-SNAPSHOT.jar
+```
+
+No avances hasta que exista ese archivo.
+
+---
+
+# 11. Qué es ese JAR
+
+Hasta este momento normalmente ejecutas:
+
+```powershell
+.\mvnw.cmd spring-boot:run
+```
+
+Pero la aplicación empaquetada también puede arrancarse directamente:
+
+```powershell
+java -jar target\admitionum-0.0.1-SNAPSHOT.jar
+```
+
+Docker hará esencialmente lo mismo.
+
+Solo que dentro del contenedor:
+
+```text
+java -jar app.jar
+```
+
+---
+
+# 12. Paso 3 — Crear `Dockerfile`
+
+Crea en **la raíz del proyecto**, exactamente junto a `pom.xml`:
+
+```text
+admitionum/
+├── Dockerfile               ← NUEVO
+├── pom.xml
+├── mvnw
+├── mvnw.cmd
+├── database/
+├── src/
+└── target/
+```
+
+No lo crees dentro de:
+
+```text
+src/
+resources/
+database/
+target/
+```
+
+La ruta es:
+
+```text
+admitionum/Dockerfile
+```
+
+El archivo no tiene extensión.
+
+No debe llamarse:
+
+```text
+Dockerfile.txt
+dockerfile
+DockerFile
+```
+
+Utiliza exactamente:
+
+```text
+Dockerfile
+```
+
+---
+
+# 13. Contenido completo de `Dockerfile`
+
+```dockerfile
+FROM eclipse-temurin:25-jre
+
+WORKDIR /app
+
+COPY target/admitionum-0.0.1-SNAPSHOT.jar app.jar
+
+EXPOSE 8080
+
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+No añadas más instrucciones en esta fase.
+
+---
+
+# 14. Explicación línea por línea
+
+## `FROM`
+
+```dockerfile
+FROM eclipse-temurin:25-jre
+```
+
+Esta es la base del contenedor.
+
+Conceptualmente:
+
+```text
+Imagen Java 25
+      ↓
+añadimos Admitionum
+      ↓
+Imagen final
+```
+
+`jre` significa que contiene el entorno necesario para **ejecutar** Java.
+
+No necesitamos Maven dentro del contenedor porque Maven ya ha compilado el proyecto antes.
+
+Nuestro proceso es:
+
+```text
+FUERA DEL CONTENEDOR
+
+Maven
+  ↓
+JAR
+
+
+DENTRO DEL CONTENEDOR
+
+Java 25
+  ↓
+JAR
+```
+
+Eso mantiene la Fase 16 sencilla.
+
+---
+
+## `WORKDIR`
+
+```dockerfile
+WORKDIR /app
+```
+
+Establece:
+
+```text
+/app
+```
+
+como carpeta de trabajo dentro del contenedor.
+
+No tiene relación con:
+
+```text
+C:\Users\...
+```
+
+Es una carpeta interna del contenedor.
+
+---
+
+## `COPY`
+
+```dockerfile
+COPY target/admitionum-0.0.1-SNAPSHOT.jar app.jar
+```
+
+Significa:
+
+```text
+TU ORDENADOR
+
+target/
+└── admitionum-0.0.1-SNAPSHOT.jar
+
+              │
+              │ COPY
+              ▼
+
+CONTENEDOR
+
+/app/
+└── app.jar
+```
+
+Renombramos el JAR a:
+
+```text
+app.jar
+```
+
+únicamente dentro de la imagen.
+
+No se renombra el archivo real de `target/`.
+
+---
+
+## `EXPOSE`
+
+```dockerfile
+EXPOSE 8080
+```
+
+Documenta que la aplicación utiliza el puerto:
+
+```text
+8080
+```
+
+Spring Boot continúa escuchando en el mismo puerto que hasta ahora.
+
+---
+
+## `ENTRYPOINT`
+
+```dockerfile
+ENTRYPOINT ["java", "-jar", "app.jar"]
+```
+
+Es la orden que Docker ejecuta al arrancar el contenedor.
+
+Equivale conceptualmente a:
+
+```bash
+java -jar app.jar
+```
+
+Por eso no tendremos que escribir ese comando manualmente cada vez.
+
+---
+
+# 15. Qué NO contiene el Dockerfile
+
+Muy importante:
+
+```text
+NO contiene:
+
+contraseña de Azure SQL
+usuario de Azure SQL
+contraseña del administrador web
+usuario del administrador web
+cadena JDBC privada completa con credenciales
+```
+
+El Dockerfile define **cómo ejecutar** la aplicación.
+
+Las credenciales se proporcionarán al crear el contenedor.
+
+```text
+IMAGEN
+│
+│ No contiene secretos
+│
+▼
+docker run
+│
+│ recibe variables de entorno
+▼
+CONTENEDOR
+```
+
+Eso coincide con la Fase 15, donde Spring Boot ya quedó preparado para obtener las credenciales de variables de entorno.
+
+---
+
+# 16. Paso 4 — Crear `.dockerignore`
+
+Crea junto al Dockerfile:
+
+```text
+admitionum/
+├── Dockerfile
+├── .dockerignore            ← NUEVO
+├── .gitignore
+├── pom.xml
+└── ...
+```
+
+Contenido completo:
+
+```dockerignore
+.git
+.github
+.idea
+.vscode
+
+data
+*.mv.db
+*.trace.db
+
+.env
+```
+
+## Para qué sirve
+
+Cuando ejecutemos:
+
+```bash
+docker build .
+```
+
+Docker recibe una carpeta denominada **build context**.
+
+`.dockerignore` le indica qué contenido no necesita recibir.
+
+Especialmente importantes:
+
+```text
+data
+*.mv.db
+```
+
+porque no queremos introducir accidentalmente la base H2 local en la imagen.
+
+Y:
+
+```text
+.env
+```
+
+porque nunca queremos enviar al proceso de construcción un archivo con secretos.
+
+---
+
+# 17. Importante: NO ignores `target`
+
+Puede resultar tentador añadir:
+
+```dockerignore
+target/
+```
+
+Pero **no debes hacerlo en este proyecto durante la Fase 16**.
+
+Nuestro Dockerfile necesita:
+
+```dockerfile
+COPY target/admitionum-0.0.1-SNAPSHOT.jar app.jar
+```
+
+Por tanto:
+
+```text
+target/              ← debe poder verlo Docker
+target/...jar        ← debe poder verlo Docker
+```
+
+Git sí ignora `target/`, lo cual es correcto. El `.gitignore` actual ya lo hace.
+
+Son dos cosas diferentes:
+
+```text
+.gitignore
+→ qué no se sube a Git
+
+.dockerignore
+→ qué no recibe docker build
+```
+
+---
+
+# 18. Estado esperado del proyecto
+
+Ahora tendrás:
+
+```text
+admitionum/
+├── Dockerfile
+├── .dockerignore
+├── .gitignore
+├── pom.xml
+├── mvnw
+├── mvnw.cmd
+│
+├── database/
+├── src/
+└── target/
+    └── admitionum-0.0.1-SNAPSHOT.jar
+```
+
+Los únicos archivos nuevos que vamos a versionar en esta parte son:
+
+```text
+Dockerfile
+.dockerignore
+```
+
+---
+
+# 19. Paso 5 — Construir la imagen
+
+Desde la carpeta donde están `pom.xml` y `Dockerfile`:
+
+```powershell
+docker build -t admitionum:phase16 .
+```
+
+El mismo comando sirve en Git Bash:
+
+```bash
+docker build -t admitionum:phase16 .
+```
+
+## Qué significa
+
+```text
+docker build
+```
+
+Construye una imagen.
+
+```text
+-t
+```
+
+Permite darle un nombre.
+
+```text
+admitionum
+```
+
+Nombre de la imagen.
+
+```text
+phase16
+```
+
+Etiqueta.
+
+Por tanto:
+
+```text
+admitionum:phase16
+```
+
+identifica nuestra imagen.
+
+El punto final:
+
+```text
+.
+```
+
+significa:
+
+> Utiliza como contexto la carpeta actual.
+
+Por eso debes ejecutar el comando desde la raíz del proyecto.
+
+---
+
+# 20. Qué debería ocurrir
+
+Docker realizará aproximadamente:
+
+```text
+1. Leer Dockerfile
+        ↓
+2. Obtener eclipse-temurin:25-jre
+        ↓
+3. Crear /app
+        ↓
+4. Copiar el JAR
+        ↓
+5. Configurar ENTRYPOINT
+        ↓
+6. Crear admitionum:phase16
+```
+
+La primera construcción puede tardar más porque Docker tendrá que descargar la imagen base.
+
+Las siguientes normalmente reutilizarán capas almacenadas localmente.
+
+---
+
+# 21. Comprobar la imagen
+
+Ejecuta:
+
+```powershell
+docker images admitionum
+```
+
+o:
+
+```bash
+docker images admitionum
+```
+
+Deberías localizar algo parecido a:
+
+```text
+REPOSITORY    TAG       ...
+admitionum    phase16   ...
+```
+
+En este momento:
+
+```text
+Admitionum está empaquetado
+```
+
+pero todavía no está ejecutándose.
+
+---
+
+# 22. Paso 6 — Primera ejecución: perfil local
+
+Aquí conviene recordar una particularidad del proyecto.
+
+Actualmente:
+
+```properties
+spring.profiles.default=local
+```
+
+está configurado en `application.properties`.
+
+Por tanto, si **no proporcionamos**:
+
+```text
+SPRING_PROFILES_ACTIVE
+```
+
+Spring utilizará:
+
+```text
+local
+```
+
+Esto nos permite hacer primero una prueba sin Azure SQL.
+
+---
+
+# 23. Pero necesitamos las credenciales administrativas
+
+`application-local.properties` utiliza:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+para Spring Security.
+
+Por tanto, ejecutaremos:
+
+### PowerShell
+
+```powershell
+docker run `
+    --name admitionum-local `
+    --rm `
+    -p 8080:8080 `
+    -e ADMIN_USERNAME=admin `
+    -e ADMIN_PASSWORD=admitionum-local-test `
+    admitionum:phase16
+```
+
+### Git Bash
+
+```bash
+docker run \
+    --name admitionum-local \
+    --rm \
+    -p 8080:8080 \
+    -e ADMIN_USERNAME=admin \
+    -e ADMIN_PASSWORD=admitionum-local-test \
+    admitionum:phase16
+```
+
+---
+
+# 24. Explicación de `docker run`
+
+## Nombre
+
+```text
+--name admitionum-local
+```
+
+El contenedor tendrá un nombre reconocible.
+
+---
+
+## Eliminación
+
+```text
+--rm
+```
+
+Al detenerlo, Docker eliminará el contenedor.
+
+La imagen:
+
+```text
+admitionum:phase16
+```
+
+permanece.
+
+---
+
+## Puerto
+
+```text
+-p 8080:8080
+```
+
+Significa:
+
+```text
+TU PC                 CONTENEDOR
+
+localhost:8080  ────► 8080
+```
+
+Por eso podrás seguir utilizando:
+
+```text
+http://localhost:8080
+```
+
+---
+
+## Variables
+
+```text
+-e ADMIN_USERNAME=...
+-e ADMIN_PASSWORD=...
+```
+
+Introduce esas variables en el contenedor durante su ejecución.
+
+No forman parte del Dockerfile.
+
+---
+
+# 25. Qué debe aparecer
+
+Espera hasta ver un mensaje equivalente a:
+
+```text
+Started AdmitionumApplication
+```
+
+Como no hemos especificado:
+
+```text
+SPRING_PROFILES_ACTIVE=prod
+```
+
+deberías ver que se utiliza:
+
+```text
+local
+```
+
+y la aplicación utilizará:
+
+```text
+jdbc:h2:file:./data/admitionum
+```
+
+La base H2 estará dentro del contenedor.
+
+---
+
+# 26. Importante sobre H2 dentro del contenedor
+
+Para esta fase **no vamos a configurar volúmenes Docker**.
+
+Al utilizar:
+
+```text
+--rm
+```
+
+y eliminar el contenedor:
+
+```text
+la base H2 de ese contenedor desaparecerá
+```
+
+Eso es correcto para esta prueba.
+
+No estamos intentando convertir H2 en una base de producción.
+
+La arquitectura sigue siendo:
+
+```text
+Local normal
+→ H2
+
+Pruebas
+→ H2 memoria
+
+Producción
+→ Azure SQL
+```
+
+No vamos a cambiarla.
+
+---
+
+# 27. Paso 7 — Probar el endpoint de salud
+
+Con el contenedor funcionando, abre una segunda terminal.
+
+Navegador:
+
+```text
+http://localhost:8080/api/public/health
+```
+
+Resultado esperado:
+
+```json
+{
+  "status": "ok",
+  "application": "Admitionum"
+}
+```
+
+También puedes hacerlo desde PowerShell:
+
+```powershell
+Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://localhost:8080/api/public/health"
+```
+
+O Git Bash:
+
+```bash
+curl -i http://localhost:8080/api/public/health
+```
+
+Debes obtener:
+
+```text
+HTTP 200
+```
+
+---
+
+# 28. Paso 8 — Probar la web pública
+
+Abre:
+
+```text
+http://localhost:8080/
+```
+
+Debe aparecer el formulario de Admitionum.
+
+No necesitamos una invitación válida para comprobar que Spring Boot está sirviendo correctamente los recursos web.
+
+La finalidad aquí es verificar:
+
+```text
+Docker
+  ↓
+Spring Boot
+  ↓
+HTML/CSS/JavaScript
+```
+
+---
+
+# 29. Paso 9 — Probar administración
+
+Abre:
+
+```text
+http://localhost:8080/admin/
+```
+
+Spring Security debería llevarte al login.
+
+Utiliza los valores de prueba:
+
+```text
+Usuario:
+admin
+
+Contraseña:
+admitionum-local-test
+```
+
+Después debe mostrarse el panel administrativo.
+
+Esto comprueba:
+
+```text
+Imagen Docker
+    ↓
+Spring Boot
+    ↓
+Spring Security
+    ↓
+HTML administrador
+```
+
+El `SecurityConfig` actual obtiene precisamente esas credenciales desde las propiedades `app.admin.username` y `app.admin.password`.
+
+---
+
+# 30. Detener el contenedor local
+
+En la terminal donde ejecutaste `docker run`:
+
+```text
+Ctrl + C
+```
+
+Como usamos:
+
+```text
+--rm
+```
+
+el contenedor debería eliminarse automáticamente.
+
+Comprueba:
+
+```powershell
+docker ps
+```
+
+`admitionum-local` ya no debe aparecer.
+
+La imagen sí continuará disponible:
+
+```powershell
+docker images admitionum
+```
+
+---
+
+# 31. Primera conclusión importante
+
+A estas alturas habremos demostrado:
+
+```text
+JAR
+ ↓
+Imagen Docker
+ ↓
+Contenedor
+ ↓
+Spring Boot
+ ↓
+H2
+```
+
+Pero esto todavía no demuestra que el contenedor pueda utilizar la configuración real de producción.
+
+Eso será la siguiente prueba de esta misma fase.
+
+---
+
+# 32. Paso 10 — Preparar variables de producción
+
+El perfil `prod` actual necesita exactamente:
+
+```text
+SPRING_DATASOURCE_URL
+SPRING_DATASOURCE_USERNAME
+SPRING_DATASOURCE_PASSWORD
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+Además de:
+
+```text
+SPRING_PROFILES_ACTIVE=prod
+```
+
+Eso coincide con la configuración creada en Fase 15. 
+
+No vamos a escribir estas variables en el Dockerfile.
+
+---
+
+# 33. Crear `.env` local
+
+En la raíz del proyecto crea:
+
+```text
+.env
+```
+
+El `.gitignore` actual ya excluye este archivo.
+
+Contenido:
+
+```env
+SPRING_PROFILES_ACTIVE=prod
+SPRING_DATASOURCE_URL=jdbc:sqlserver://admitionum-sql-portfolio.database.windows.net:1433;databaseName=admitionum;encrypt=true;trustServerCertificate=false;loginTimeout=30;
+SPRING_DATASOURCE_USERNAME=admitionum_app
+SPRING_DATASOURCE_PASSWORD=TU_PASSWORD_SQL_REAL
+ADMIN_USERNAME=TU_USUARIO_ADMIN
+ADMIN_PASSWORD=TU_PASSWORD_ADMIN_REAL
+```
+
+Sustituye únicamente:
+
+```text
+TU_PASSWORD_SQL_REAL
+TU_USUARIO_ADMIN
+TU_PASSWORD_ADMIN_REAL
+```
+
+por los datos que ya utilizaste correctamente en Fase 15.
+
+No pongas comillas alrededor de la URL JDBC en este archivo.
+
+---
+
+# 34. Qué estamos haciendo realmente
+
+El archivo:
+
+```text
+.env
+```
+
+solo existe en tu ordenador.
+
+La relación será:
+
+```text
+.env
+  │
+  │ docker run --env-file
+  ▼
+CONTENEDOR
+  │
+  ▼
+Spring Boot
+```
+
+Y no:
+
+```text
+.env
+  ✗
+IMAGEN DOCKER
+```
+
+Ni:
+
+```text
+.env
+  ✗
+GITHUB
+```
+
+Además, nuestro `.dockerignore` también contiene:
+
+```text
+.env
+```
+
+por seguridad.
+
+---
+
+# 35. Comprobar que Git no ve `.env`
+
+Ejecuta:
+
+```bash
+git status
+```
+
+El archivo:
+
+```text
+.env
+```
+
+**no debe aparecer**.
+
+Si aparece como archivo nuevo, no continúes hasta comprobar `.gitignore`.
+
+No hagas jamás:
+
+```bash
+git add -f .env
+```
+
+---
+
+# 36. Paso 11 — Ejecutar el contenedor con Azure SQL
+
+Asegúrate de que el contenedor anterior esté detenido.
+
+Ahora ejecuta:
+
+### PowerShell
+
+```powershell
+docker run `
+    --name admitionum-prod-test `
+    --rm `
+    -p 8080:8080 `
+    --env-file .env `
+    admitionum:phase16
+```
+
+### Git Bash
+
+```bash
+docker run \
+    --name admitionum-prod-test \
+    --rm \
+    -p 8080:8080 \
+    --env-file .env \
+    admitionum:phase16
+```
+
+Ahora la imagen es exactamente la misma:
+
+```text
+admitionum:phase16
+```
+
+Solo cambia la configuración.
+
+---
+
+# 37. Resultado esperado en producción
+
+Spring Boot debe utilizar:
+
+```text
+prod
+```
+
+Entonces lee:
+
+```text
+application-prod.properties
+```
+
+que actualmente configura:
+
+```properties
+spring.datasource.url=${SPRING_DATASOURCE_URL}
+spring.datasource.username=${SPRING_DATASOURCE_USERNAME}
+spring.datasource.password=${SPRING_DATASOURCE_PASSWORD}
+
+spring.jpa.hibernate.ddl-auto=validate
+spring.h2.console.enabled=false
+```
+
+El flujo pasa a ser:
+
+```text
+CONTENEDOR
+    │
+    │ Microsoft JDBC Driver
+    ▼
+Internet
+    │
+    ▼
+Azure SQL
+    │
+    ▼
+admitionum
+```
+
+---
+
+# 38. Qué buscar en los logs
+
+Debes comprobar:
+
+```text
+Perfil activo: prod
+```
+
+Después, una conexión correcta de HikariCP.
+
+Después, Hibernate debe validar el esquema.
+
+Finalmente:
+
+```text
+Started AdmitionumApplication
+```
+
+Esto demostraría algo muy importante:
+
+```text
+El JAR empaquetado en Docker
+puede utilizar Azure SQL
+sin que las credenciales formen parte de la imagen.
+```
+
+---
+
+# 39. Probar nuevamente salud
+
+Abre:
+
+```text
+http://localhost:8080/api/public/health
+```
+
+Debe devolver HTTP 200.
+
+---
+
+# 40. Probar administración con `prod`
+
+Abre:
+
+```text
+http://localhost:8080/admin/
+```
+
+Utiliza:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+del `.env`.
+
+Debes poder iniciar sesión y abrir el panel.
+
+Si la base de Azure sigue vacía, ver una tabla sin respuestas es perfectamente correcto.
+
+En Fase 15 ya se decidió que producción puede permanecer inicialmente sin datos demo. 
+
+---
+
+# 41. No pruebes secretos escribiéndolos en el Dockerfile
+
+Nunca hagas algo como:
+
+```dockerfile
+ENV SPRING_DATASOURCE_PASSWORD=MiPassword
+```
+
+ni:
+
+```dockerfile
+ENV ADMIN_PASSWORD=MiPassword
+```
+
+ni:
+
+```dockerfile
+ENV SPRING_DATASOURCE_URL=...
+```
+
+La imagen Docker acabará utilizándose en Azure.
+
+Una imagen debe poder ser:
+
+```text
+construida una vez
+        ↓
+ejecutada con configuraciones diferentes
+```
+
+Por ejemplo:
+
+```text
+misma imagen
+   │
+   ├── configuración local
+   │
+   └── configuración prod
+```
+
+---
+
+# 42. Detener el contenedor de producción
+
+En la terminal:
+
+```text
+Ctrl + C
+```
+
+Comprueba:
+
+```powershell
+docker ps
+```
+
+No debe permanecer `admitionum-prod-test`.
+
+---
+
+# 43. Paso 12 — Verificar Maven independientemente de Docker
+
+Después de las pruebas Docker, volvemos a comprobar el proyecto Java normal.
+
+### PowerShell
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+### Git Bash
+
+```bash
+./mvnw clean test
+```
+
+Debe terminar:
+
+```text
+BUILD SUCCESS
+```
+
+Esto confirma que Docker no ha alterado:
+
+```text
+código Java
+tests
+H2 test
+Spring Security
+API
+```
+
+---
+
+# 44. Reconstruir después de `clean test`
+
+Atención: `clean test` elimina `target/` y vuelve a generar clases de prueba, pero no necesariamente deja preparado el JAR final que necesita nuestro Dockerfile.
+
+Antes de volver a ejecutar:
+
+```text
+docker build
+```
+
+haz:
+
+```powershell
+.\mvnw.cmd package
+```
+
+o Git Bash:
+
+```bash
+./mvnw package
+```
+
+Después vuelve a existir:
+
+```text
+target/admitionum-0.0.1-SNAPSHOT.jar
+```
+
+Esta relación debe quedarte clara:
+
+```text
+Maven package
+    ↓
+crea el JAR
+
+docker build
+    ↓
+copia el JAR
+```
+
+---
+
+# 45. Comprobaciones Docker útiles
+
+Ver imágenes:
+
+```bash
+docker images
+```
+
+Ver contenedores actualmente ejecutándose:
+
+```bash
+docker ps
+```
+
+Ver también contenedores detenidos:
+
+```bash
+docker ps -a
+```
+
+Detener manualmente:
+
+```bash
+docker stop admitionum-local
+```
+
+o:
+
+```bash
+docker stop admitionum-prod-test
+```
+
+Ver logs de un contenedor que no haya sido eliminado:
+
+```bash
+docker logs NOMBRE_CONTENEDOR
+```
+
+Durante nuestras ejecuciones usamos `--rm`, por lo que normalmente los contenedores desaparecerán al detenerse.
+
+---
+
+# 46. Errores habituales
+
+## Error 1 — `docker` no se reconoce
+
+Ejemplo:
+
+```text
+'docker' is not recognized...
+```
+
+Docker Desktop no está instalado correctamente o la terminal todavía no reconoce su instalación.
+
+Comprueba:
+
+```powershell
+docker --version
+```
+
+---
+
+## Error 2 — Docker está instalado pero el motor no responde
+
+Ejemplo:
+
+```text
+Cannot connect to the Docker daemon
+```
+
+Abre Docker Desktop y espera a que su motor esté iniciado.
+
+Después:
+
+```powershell
+docker info
+```
+
+---
+
+## Error 3 — Docker está usando contenedores Windows
+
+Nuestra imagen base:
+
+```text
+eclipse-temurin:25-jre
+```
+
+debe ejecutarse como contenedor Linux en este proyecto.
+
+Si Docker muestra problemas de plataforma, comprueba que Docker Desktop esté usando **Linux containers**.
+
+No cambies el Dockerfile a una imagen Java diferente para intentar corregirlo sin analizar primero el error.
+
+---
+
+## Error 4 — No existe el JAR
+
+Por ejemplo:
+
+```text
+COPY failed
+```
+
+o:
+
+```text
+target/admitionum-0.0.1-SNAPSHOT.jar: not found
+```
+
+Comprueba:
+
+```powershell
+Get-ChildItem .\target\*.jar
+```
+
+Si no existe:
+
+```powershell
+.\mvnw.cmd clean package
+```
+
+No modifiques `COPY` hasta comprobar primero el nombre real.
+
+El `pom.xml` actual establece `admitionum` y `0.0.1-SNAPSHOT`.
+
+---
+
+## Error 5 — El puerto 8080 está ocupado
+
+Mensaje aproximado:
+
+```text
+port is already allocated
+```
+
+Probablemente sigue funcionando:
+
+```text
+mvn spring-boot:run
+```
+
+u otro contenedor.
+
+Comprueba:
+
+```powershell
+docker ps
+```
+
+Y en Windows:
+
+```powershell
+netstat -ano | findstr :8080
+```
+
+Detén la aplicación anterior.
+
+No cambiaremos Admitionum a otro puerto durante esta fase.
+
+---
+
+## Error 6 — Falta `ADMIN_USERNAME`
+
+Podrías obtener un error relacionado con:
+
+```text
+Could not resolve placeholder 'ADMIN_USERNAME'
+```
+
+El perfil local también requiere:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+porque `SecurityConfig` los utiliza para crear al administrador.
+
+Arranca el contenedor incluyendo ambas variables.
+
+---
+
+## Error 7 — H2 local está vacío
+
+Cuando ejecutamos la imagen con:
+
+```text
+--rm
+```
+
+la base H2 existe dentro de ese contenedor.
+
+Al eliminarlo:
+
+```text
+se elimina también esa base local del contenedor
+```
+
+No es un error.
+
+No cambiaremos esta situación en Fase 16.
+
+---
+
+## Error 8 — Azure SQL no conecta
+
+Si el perfil `prod` muestra errores de conexión, comprueba en este orden:
+
+```text
+SPRING_PROFILES_ACTIVE=prod
+
+SPRING_DATASOURCE_URL
+
+SPRING_DATASOURCE_USERNAME
+
+SPRING_DATASOURCE_PASSWORD
+
+Firewall de Azure SQL
+```
+
+No cambies:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+La Fase 15 ya demostró que el esquema real es compatible. 
+
+---
+
+## Error 9 — `Login failed for user 'admitionum_app'`
+
+Comprueba:
+
+```text
+SPRING_DATASOURCE_USERNAME
+SPRING_DATASOURCE_PASSWORD
+```
+
+El usuario de aplicación creado en Fase 15 es:
+
+```text
+admitionum_app
+```
+
+y se creó dentro de la propia base `admitionum`, con permisos limitados de lectura y escritura. 
+
+No sustituyas permanentemente ese usuario por el administrador SQL.
+
+---
+
+## Error 10 — `Schema-validation` falla
+
+Si aparece un error de Hibernate relacionado con columnas:
+
+```text
+Schema-validation...
+```
+
+no cambies inmediatamente las entidades.
+
+La Fase 15 ya verificó:
+
+```text
+Integer Java
+→ TINYINT SQL
+
+String nacionalizado
+→ NVARCHAR
+```
+
+y Hibernate consiguió validar Azure SQL. 
+
+Comprueba primero que el contenedor esté conectándose a la misma base correcta:
+
+```text
+admitionum
+```
+
+---
+
+# 47. Paso 13 — Revisar Git
+
+Ejecuta:
+
+```bash
+git status
+```
+
+Antes del commit deberían aparecer únicamente:
+
+```text
+Dockerfile
+.dockerignore
+```
+
+No deberían aparecer:
+
+```text
+target/
+data/
+.env
+*.mv.db
+```
+
+Especialmente:
+
+```text
+.env
+```
+
+**no debe aparecer jamás en el commit.**
+
+---
+
+# 48. Revisar exactamente lo que vamos a guardar
+
+```bash
+git diff -- Dockerfile .dockerignore
+```
+
+Comprueba nuevamente que no hay:
+
+```text
+password
+contraseñas reales
+credenciales SQL
+```
+
+---
+
+# 49. Commit de Docker
+
+Añade:
+
+```bash
+git add Dockerfile
+git add .dockerignore
+```
+
+Commit:
+
+```bash
+git commit -m "feat: containerize Admitionum with Docker"
+```
+
+Comprueba:
+
+```bash
+git status
+```
+
+Debe quedar limpio salvo que tengas algún archivo de trazabilidad todavía sin registrar.
+
+---
+
+# 50. Subir Phase16
+
+```bash
+git push -u origin Phase16
+```
+
+Posteriormente podrás crear el pull request:
+
+```text
+Phase16
+   ↓
+main
+```
+
+Como en las fases anteriores.
+
+---
+
+# 51. Resultado final de la Fase 16
+
+Cuando termine, la arquitectura habrá evolucionado de:
+
+```text
+ANTES
+
+Windows
+   │
+   ├── Java 25
+   └── java -jar Admitionum
+```
+
+a:
+
+```text
+DESPUÉS
+
+Windows
+   │
+   ▼
+Docker
+   │
+   ▼
+┌─────────────────────────┐
+│ Admitionum              │
+│                         │
+│ Java 25                 │
+│ app.jar                 │
+│ puerto 8080             │
+└─────────────────────────┘
+        │
+        ├── local → H2
+        │
+        └── prod  → Azure SQL
+```
+
+Y la siguiente fase podrá hacer:
+
+```text
+admitionum Docker image
+        │
+        ▼
+Azure Container Apps
+```
+
+---
+
+# 52. Criterios de finalización
+
+No considero terminada la Fase 16 hasta que todos estos puntos sean correctos:
+
+```text
+[ ] Phase15 está integrada en main.
+
+[ ] Se ha creado la rama Phase16.
+
+[ ] Docker Desktop funciona.
+
+[ ] docker --version funciona.
+
+[ ] docker info funciona.
+
+[ ] hello-world funciona.
+
+[ ] mvnw clean test termina con BUILD SUCCESS antes de los cambios.
+
+[ ] mvnw clean package genera el JAR.
+
+[ ] Existe:
+    target/admitionum-0.0.1-SNAPSHOT.jar
+
+[ ] Existe Dockerfile en la raíz.
+
+[ ] Dockerfile utiliza:
+    eclipse-temurin:25-jre
+
+[ ] Dockerfile copia el JAR correcto.
+
+[ ] Dockerfile expone 8080.
+
+[ ] Dockerfile ejecuta:
+    java -jar app.jar
+
+[ ] Existe .dockerignore.
+
+[ ] .dockerignore excluye .env.
+
+[ ] .dockerignore NO excluye target/.
+
+[ ] docker build termina correctamente.
+
+[ ] Existe la imagen:
+    admitionum:phase16
+
+[ ] El contenedor arranca con perfil local.
+
+[ ] El perfil local utiliza H2.
+
+[ ] /api/public/health devuelve HTTP 200 desde Docker.
+
+[ ] La página pública funciona desde Docker.
+
+[ ] /admin/ solicita autenticación.
+
+[ ] El panel administrativo funciona desde Docker.
+
+[ ] Se crea .env solo localmente.
+
+[ ] .env no aparece en git status.
+
+[ ] El contenedor arranca con perfil prod.
+
+[ ] El perfil prod conecta con Azure SQL.
+
+[ ] Hibernate valida el esquema desde el contenedor.
+
+[ ] /api/public/health funciona con perfil prod.
+
+[ ] /admin/ funciona con perfil prod.
+
+[ ] Ninguna contraseña está escrita en Dockerfile.
+
+[ ] Ninguna contraseña está incluida en Git.
+
+[ ] mvnw clean test vuelve a terminar con BUILD SUCCESS.
+
+[ ] No se ha creado Azure Container Apps.
+
+[ ] No se ha creado GitHub Actions.
+
+[ ] Dockerfile y .dockerignore se han versionado.
+
+[ ] Se ha creado un commit pequeño.
+
+[ ] Phase16 se ha subido a GitHub.
+```
+
+---
+
+# 53. Texto para la trazabilidad cuando terminemos
+
+Cuando hayas realizado realmente todas las comprobaciones anteriores, el bloque final de esta fase podrá quedar aproximadamente así:
+
+```text
+Fase 16 — Dockerización de Admitionum
+
+Estado: completada.
+
+Objetivo:
+Empaquetar Admitionum como una imagen Docker reproducible antes
+de realizar el despliegue en Azure Container Apps.
+
+Configuración mantenida:
+- Java 25.
+- Spring Boot 4.1.0.
+- Maven.
+- Arquitectura monolítica.
+- H2 para perfil local.
+- H2 en memoria para pruebas.
+- Azure SQL para perfil prod.
+- Spring Security mediante sesión.
+
+Archivos creados:
+- Dockerfile.
+- .dockerignore.
+
+Dockerfile:
+- Imagen base: eclipse-temurin:25-jre.
+- Directorio de trabajo: /app.
+- JAR: admitionum-0.0.1-SNAPSHOT.jar.
+- Nombre interno: app.jar.
+- Puerto documentado: 8080.
+- Ejecución: java -jar app.jar.
+
+Imagen:
+- Nombre: admitionum.
+- Tag utilizado durante la fase: phase16.
+
+Perfil local:
+- El contenedor se ejecutó sin activar prod.
+- Spring utilizó el perfil local por defecto.
+- H2 funcionó dentro del contenedor.
+- ADMIN_USERNAME y ADMIN_PASSWORD se proporcionaron mediante
+  variables de entorno.
+- /api/public/health respondió correctamente.
+- La web pública funcionó.
+- /admin/ solicitó autenticación.
+- El panel administrativo funcionó.
+
+Perfil prod:
+- SPRING_PROFILES_ACTIVE=prod.
+- SPRING_DATASOURCE_URL se proporcionó en tiempo de ejecución.
+- SPRING_DATASOURCE_USERNAME se proporcionó en tiempo de ejecución.
+- SPRING_DATASOURCE_PASSWORD se proporcionó en tiempo de ejecución.
+- ADMIN_USERNAME se proporcionó en tiempo de ejecución.
+- ADMIN_PASSWORD se proporcionó en tiempo de ejecución.
+- Las variables se cargaron mediante un archivo .env local
+  excluido de Git.
+- La imagen no contiene secretos.
+- Spring Boot conectó con Azure SQL.
+- Hibernate validó correctamente el esquema.
+- /api/public/health funcionó.
+- /admin/ funcionó.
+
+Pruebas:
+- docker build finalizó correctamente.
+- La imagen se ejecutó localmente.
+- mvnw clean test finalizó con BUILD SUCCESS.
+
+Seguridad:
+- No se almacenaron credenciales en Dockerfile.
+- .env permanece excluido mediante .gitignore y .dockerignore.
+- No se incorporó la base H2 local a la imagen.
+- No existen secretos en Git.
+
+Elementos no desarrollados:
+- Azure Container Apps.
+- GitHub Actions.
+- Managed Identity.
+- Key Vault.
+- Kubernetes.
+
+Commit:
+- feat: containerize Admitionum with Docker
+
+Siguiente fase:
+- Fase 17 — Desplegar en Azure Container Apps.
+```
+
+La Fase 16 queda así deliberadamente limitada a **conseguir que la misma aplicación que ya funciona pueda ejecutarse correctamente dentro de Docker, primero con H2 y después contra Azure SQL**. No vamos a tocar Azure Container Apps hasta haber demostrado eso localmente.
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 16.1
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+# Fase 16.1 — Corrección del entorno Docker y conexión con Azure SQL Serverless
+
+## Estado
+
+Completada.
+
+## Objetivo
+
+Documentar y resolver las incidencias encontradas durante la ejecución de Admitionum dentro de Docker:
+
+1. Docker estaba instalado, pero el motor de Docker Desktop no estaba iniciado.
+2. El contenedor arrancaba con el perfil `prod`, pero Azure SQL devolvía temporalmente el error `40613` porque la base de datos no estaba disponible mientras se reanudaba.
+
+Esta corrección no modifica la arquitectura definida en la Fase 16.
+
+---
+
+# 1. Arquitectura mantenida
+
+Se conserva la arquitectura establecida:
+
+```text
+Imagen Docker
+├── Java 25
+├── Spring Boot 4.1.0
+├── Admitionum
+└── Puerto 8080
+        │
+        ├── perfil local → H2
+        └── perfil prod  → Azure SQL
+```
+
+También se mantiene:
+
+```text
+Imagen:
+admitionum:phase16
+
+Contenedor local:
+admitionum-local
+
+Contenedor de producción:
+admitionum-prod-test
+```
+
+No se modifica:
+
+* El código Java.
+* Las entidades JPA.
+* Los repositorios.
+* Spring Security.
+* `application-prod.properties`.
+* El `Dockerfile`.
+* `.dockerignore`.
+* El esquema de Azure SQL.
+* El usuario SQL `admitionum_app`.
+
+---
+
+# 2. Incidencia 1 — Docker estaba instalado, pero el motor no funcionaba
+
+Al ejecutar:
+
+```powershell
+docker --version
+```
+
+se obtenía correctamente una versión de Docker:
+
+```text
+Docker version 29.7.2
+```
+
+Sin embargo, los comandos que necesitaban comunicarse con el motor fallaban:
+
+```powershell
+docker info
+docker run --rm hello-world
+```
+
+El mensaje principal era:
+
+```text
+failed to connect to the docker API at
+npipe:////./pipe/dockerDesktopLinuxEngine
+
+The system cannot find the file specified.
+```
+
+## 2.1. Diagnóstico
+
+El comando:
+
+```powershell
+docker --version
+```
+
+solo comprueba que el cliente de línea de comandos de Docker está instalado.
+
+No demuestra que el motor encargado de crear imágenes y ejecutar contenedores esté funcionando.
+
+La situación era:
+
+```text
+Cliente Docker
+    │
+    └── instalado correctamente
+
+Motor Docker Desktop
+    │
+    └── no iniciado
+```
+
+El contexto mostrado era:
+
+```text
+Context: desktop-linux
+```
+
+Este contexto era correcto porque Admitionum utiliza una imagen Linux:
+
+```dockerfile
+FROM eclipse-temurin:25-jre
+```
+
+Por tanto, no era necesario cambiar a contenedores Windows ni modificar el `Dockerfile`.
+
+---
+
+# 3. Solución de la incidencia de Docker Desktop
+
+Se abrió manualmente:
+
+```text
+Docker Desktop
+```
+
+desde el menú Inicio de Windows.
+
+Después se esperó hasta que Docker Desktop indicó que el motor estaba funcionando.
+
+A continuación, se abrió una nueva terminal de PowerShell y se realizaron las comprobaciones:
+
+```powershell
+docker info
+```
+
+La comprobación debía mostrar información tanto del cliente como del servidor, sin el error de `dockerDesktopLinuxEngine`.
+
+Después:
+
+```powershell
+docker run --rm hello-world
+```
+
+El resultado correcto debía incluir:
+
+```text
+Hello from Docker!
+```
+
+## 3.1. Comprobación de WSL en caso de que Docker Desktop no arrancase
+
+Como Docker Desktop utiliza WSL 2 para ejecutar contenedores Linux en Windows, se dejaron documentadas las siguientes comprobaciones:
+
+```powershell
+wsl --status
+wsl --version
+```
+
+Si WSL necesitaba actualizarse:
+
+```powershell
+wsl --update
+```
+
+Para reiniciar completamente el entorno WSL:
+
+```powershell
+wsl --shutdown
+```
+
+Después sería necesario reiniciar Docker Desktop y repetir:
+
+```powershell
+docker info
+docker run --rm hello-world
+```
+
+En este caso no fue necesario modificar Admitionum porque el problema pertenecía exclusivamente al entorno Docker de Windows.
+
+---
+
+# 4. Resultado de la primera corrección
+
+Después de iniciar correctamente Docker Desktop se confirmó:
+
+```text
+[OK] El cliente Docker estaba instalado.
+[OK] Docker Desktop estaba iniciado.
+[OK] El motor Linux respondía.
+[OK] El contexto desktop-linux era correcto.
+[OK] hello-world podía ejecutarse.
+[OK] No fue necesario modificar el Dockerfile.
+```
+
+Con el motor funcionando se pudo continuar con:
+
+```powershell
+docker build -t admitionum:phase16 .
+```
+
+y con la ejecución de los contenedores definidos en la Fase 16.
+
+---
+
+# 5. Incidencia 2 — Azure SQL devolvía el error 40613
+
+Al ejecutar la imagen con el perfil de producción:
+
+```powershell
+docker run `
+    --name admitionum-prod-test `
+    --rm `
+    -p 8080:8080 `
+    --env-file .env `
+    admitionum:phase16
+```
+
+Spring Boot comenzó correctamente:
+
+```text
+Starting AdmitionumApplication
+```
+
+También confirmó el perfil adecuado:
+
+```text
+The following 1 profile is active: "prod"
+```
+
+Tomcat comenzó a prepararse en el puerto esperado:
+
+```text
+Tomcat initialized with port 8080
+```
+
+Spring Data encontró los repositorios JPA:
+
+```text
+Found 2 JPA repository interfaces
+```
+
+Finalmente, HikariCP intentó abrir la conexión:
+
+```text
+HikariPool-1 - Starting...
+```
+
+En ese momento Azure SQL respondió:
+
+```text
+ErrorCode: 40613
+SQLState: S0001
+```
+
+Mensaje principal:
+
+```text
+Database 'admitionum' on server
+'admitionum-sql-portfolio.database.windows.net'
+is not currently available.
+Please retry the connection later.
+```
+
+---
+
+# 6. Diagnóstico del error 40613
+
+El error demostraba que:
+
+```text
+Contenedor
+    │
+    ▼
+Microsoft JDBC Driver
+    │
+    ▼
+Servidor de Azure SQL
+```
+
+habían conseguido comunicarse.
+
+Por tanto, ya eran correctos:
+
+* La imagen Docker.
+* La ejecución del JAR.
+* El perfil `prod`.
+* La lectura del archivo `.env`.
+* La dirección del servidor SQL.
+* El nombre de la base de datos.
+* La disponibilidad general de red hasta Azure SQL.
+
+El problema era que la base:
+
+```text
+admitionum
+```
+
+no estaba disponible en ese instante.
+
+La base utiliza Azure SQL Serverless, que puede pausarse automáticamente cuando permanece un tiempo sin actividad.
+
+El primer intento de conexión puede provocar su reanudación:
+
+```text
+Base pausada
+    │
+    │ primer intento de conexión
+    ▼
+Base reanudándose
+    │
+    │ respuesta temporal
+    ▼
+Error 40613
+    │
+    │ espera y nuevo intento
+    ▼
+Base Online
+```
+
+La reanudación puede necesitar aproximadamente un minuto.
+
+Por tanto, el código `40613` se trató como un error transitorio de disponibilidad y no como un error del código de Admitionum.
+
+---
+
+# 7. Mensaje secundario de Hibernate
+
+Después del error `40613`, Hibernate mostró:
+
+```text
+Unable to determine Dialect without JDBC metadata
+```
+
+Este mensaje no era la causa principal.
+
+Hibernate intenta consultar los metadatos de Azure SQL para reconocer automáticamente el tipo de base de datos.
+
+Como Azure SQL todavía no aceptaba conexiones, Hibernate no pudo consultar esos metadatos y mostró el error del dialecto.
+
+La relación correcta era:
+
+```text
+Azure SQL no disponible
+        │
+        ▼
+No se obtiene conexión JDBC
+        │
+        ▼
+No se pueden consultar metadatos
+        │
+        ▼
+Hibernate no puede determinar el dialecto
+```
+
+Por tanto, no se añadió:
+
+```properties
+hibernate.dialect=...
+```
+
+Tampoco se modificó:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+Configurar manualmente el dialecto habría ocultado un síntoma secundario, pero no habría solucionado la falta de disponibilidad de Azure SQL.
+
+---
+
+# 8. Solución aplicada
+
+En Azure Portal se accedió a:
+
+```text
+SQL databases
+    ↓
+admitionum
+    ↓
+Overview
+    ↓
+Status
+```
+
+Se comprobó si la base aparecía como:
+
+```text
+Paused
+Resuming
+Online
+```
+
+El primer intento del contenedor había solicitado la reanudación de la base.
+
+Se esperó hasta que Azure SQL terminó el proceso y la base volvió a estar disponible.
+
+Después se ejecutó nuevamente:
+
+```powershell
+docker run `
+    --name admitionum-prod-test `
+    --rm `
+    -p 8080:8080 `
+    --env-file .env `
+    admitionum:phase16
+```
+
+Como el contenedor anterior se había ejecutado con:
+
+```text
+--rm
+```
+
+Docker lo eliminó automáticamente después del fallo de arranque.
+
+En caso de duda, se podía comprobar con:
+
+```powershell
+docker ps -a --filter "name=admitionum-prod-test"
+```
+
+---
+
+# 9. Resultado de la segunda ejecución
+
+En el nuevo intento Spring Boot completó correctamente el arranque:
+
+```text
+Started AdmitionumApplication in 6.979 seconds
+(process running for 7.713)
+```
+
+Esta línea confirmó simultáneamente:
+
+```text
+[OK] La imagen Docker era válida.
+[OK] Java 25 funcionaba dentro del contenedor.
+[OK] El JAR podía ejecutarse.
+[OK] El perfil prod estaba activo.
+[OK] Las variables del archivo .env estaban disponibles.
+[OK] HikariCP pudo establecer la conexión.
+[OK] Hibernate pudo acceder a los metadatos.
+[OK] Hibernate pudo inicializar JPA.
+[OK] Azure SQL estaba disponible.
+[OK] Tomcat quedó escuchando en el puerto 8080.
+[OK] Admitionum terminó correctamente su arranque.
+```
+
+El error anterior quedó confirmado como una incidencia temporal causada por la reanudación de Azure SQL Serverless.
+
+---
+
+# 10. Pruebas posteriores al arranque
+
+Con el contenedor todavía en ejecución, se abrió una segunda terminal de PowerShell.
+
+## 10.1. Endpoint de salud
+
+Se ejecutó:
+
+```powershell
+Invoke-RestMethod `
+    -Method Get `
+    -Uri "http://localhost:8080/api/public/health"
+```
+
+El resultado esperado era:
+
+```text
+status application
+------ -----------
+ok     Admitionum
+```
+
+También se podía comprobar desde el navegador:
+
+```text
+http://localhost:8080/api/public/health
+```
+
+Resultado JSON esperado:
+
+```json
+{
+  "status": "ok",
+  "application": "Admitionum"
+}
+```
+
+## 10.2. Panel administrativo
+
+Se abrió:
+
+```text
+http://localhost:8080/admin/
+```
+
+La aplicación debía solicitar autenticación.
+
+Se utilizaron los valores definidos localmente en `.env`:
+
+```text
+ADMIN_USERNAME
+ADMIN_PASSWORD
+```
+
+Las credenciales no se escribieron en:
+
+* El `Dockerfile`.
+* El código Java.
+* `application-prod.properties`.
+* Git.
+* El documento de trazabilidad.
+
+---
+
+# 11. Detención del contenedor
+
+Una vez terminadas las comprobaciones, el contenedor se detuvo desde la terminal donde estaba ejecutándose:
+
+```text
+Ctrl + C
+```
+
+Debido a la opción:
+
+```text
+--rm
+```
+
+el contenedor se eliminó automáticamente.
+
+Se comprobó con:
+
+```powershell
+docker ps
+```
+
+El contenedor:
+
+```text
+admitionum-prod-test
+```
+
+ya no debía aparecer.
+
+La imagen continuaba disponible:
+
+```powershell
+docker images admitionum
+```
+
+Resultado esperado:
+
+```text
+REPOSITORY    TAG
+admitionum    phase16
+```
+
+---
+
+# 12. Archivos modificados
+
+Esta corrección no necesitó modificar archivos del proyecto.
+
+No se modificaron:
+
+```text
+Dockerfile
+.dockerignore
+pom.xml
+application.properties
+application-local.properties
+application-prod.properties
+código Java
+tests
+```
+
+El archivo local:
+
+```text
+.env
+```
+
+continuó excluido de Git.
+
+No se almacenó ninguna contraseña en el repositorio.
+
+---
+
+# 13. Git y commit
+
+Como la solución consistió en iniciar Docker Desktop y reintentar la conexión después de la reanudación de Azure SQL, no fue necesario crear un commit adicional para la Fase 16.1.
+
+La corrección documenta una incidencia del entorno de ejecución, no un cambio en el código fuente.
+
+El commit de la Fase 16 continúa siendo:
+
+```text
+feat: containerize Admitionum with Docker
+```
+
+No debe crearse un commit vacío únicamente para representar la corrección documental.
+
+Si el archivo general de trazabilidad forma parte del repositorio y se actualiza con esta sección, se podrá incluir esa actualización según el procedimiento habitual del proyecto.
+
+---
+
+# 14. Qué no debe hacerse ante este error
+
+No se debe modificar el `Dockerfile`.
+
+No se debe cambiar la imagen:
+
+```dockerfile
+FROM eclipse-temurin:25-jre
+```
+
+No se debe cambiar el puerto:
+
+```dockerfile
+EXPOSE 8080
+```
+
+No se debe introducir ninguna contraseña mediante:
+
+```dockerfile
+ENV
+```
+
+No se debe sustituir permanentemente:
+
+```text
+admitionum_app
+```
+
+por el administrador del servidor SQL.
+
+No se debe desactivar:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+No se debe añadir manualmente un dialecto de Hibernate para ocultar el mensaje secundario.
+
+No se debe reconstruir la imagen si no ha cambiado el JAR ni el `Dockerfile`.
+
+El procedimiento correcto para el error `40613` es comprobar el estado de Azure SQL, esperar su reanudación y repetir la conexión.
+
+---
+
+# 15. Criterios de cierre de la Fase 16.1
+
+```text
+[x] Docker CLI estaba instalado.
+
+[x] Docker Desktop fue iniciado.
+
+[x] El motor desktop-linux respondió correctamente.
+
+[x] docker info dejó de mostrar el error de conexión.
+
+[x] hello-world pudo ejecutarse.
+
+[x] No se cambió a Windows containers.
+
+[x] La imagen admitionum:phase16 pudo ejecutarse.
+
+[x] Spring Boot activó el perfil prod.
+
+[x] El archivo .env fue leído durante la ejecución.
+
+[x] Azure SQL devolvió inicialmente el error transitorio 40613.
+
+[x] Se identificó la pausa o reanudación de Azure SQL Serverless.
+
+[x] Se esperó hasta que la base volvió a estar disponible.
+
+[x] Se repitió docker run sin reconstruir innecesariamente la imagen.
+
+[x] Hibernate pudo inicializarse después de recuperar la conexión.
+
+[x] Spring Boot mostró Started AdmitionumApplication.
+
+[x] No se modificó el código Java.
+
+[x] No se modificó el Dockerfile.
+
+[x] No se desactivó la validación del esquema.
+
+[x] No se añadieron secretos al repositorio.
+
+[x] No fue necesario crear un commit correctivo de código.
+```
+
+---
+
+# 16. Resultado final
+
+La Fase 16.1 confirma que los dos errores observados pertenecían al entorno de ejecución:
+
+```text
+Error dockerDesktopLinuxEngine
+    ↓
+Docker Desktop no estaba iniciado
+    ↓
+Abrir Docker Desktop
+    ↓
+Motor Docker operativo
+```
+
+y:
+
+```text
+Error Azure SQL 40613
+    ↓
+Base Serverless pausada o reanudándose
+    ↓
+Esperar hasta que esté disponible
+    ↓
+Repetir docker run
+    ↓
+Started AdmitionumApplication
+```
+
+La aplicación quedó correctamente ejecutada dentro de Docker y conectada a Azure SQL mediante el perfil `prod`.
+
+No fue necesario modificar el diseño ni el código de Admitionum.
+
+## Estado final
+
+```text
+Fase 16.1 — Completada
+```
+
+## Siguiente paso
+
+Finalizar las pruebas del endpoint de salud y del panel administrativo descritas en la Fase 16 y, una vez verificados todos sus criterios de cierre, preparar la siguiente fase:
+
+```text
+Fase 17 — Despliegue de Admitionum en Azure Container Apps
+```
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 17
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
