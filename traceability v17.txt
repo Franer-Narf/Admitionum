@@ -138,11 +138,11 @@ Forma de ayudarme:
 
 Estado actual completado:
 
-Fase 16
+Fase 17
 
 Fase que quiero desarrollar:
 
-Fase 17
+Fase 18
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
@@ -39503,6 +39503,1266 @@ Fase 17
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
+# Fase 17 — Despliegue de Admitionum en Azure Container Apps y resolución de incidencias
 
+## Estado
+
+Completada.
+
+## Contexto de partida
+
+La Fase 17 comenzó después de completar:
+
+```text
+Fases 1–15: completadas
+Fase 16: Docker completado
+Fase 16.1: incidencias de Docker Desktop y Azure SQL Serverless documentadas y resueltas
+Fase 17: Azure Container Apps ← fase desarrollada en este bloque
+Fase 18: GitHub Actions ← todavía no desarrollada
+Fase 19: documentación de portfolio ← todavía no desarrollada
+```
+
+La configuración técnica válida se mantuvo sin cambios:
+
+```text
+Aplicación: Admitionum v1.1
+Java: 25
+Spring Boot: 4.1.0
+Maven
+Arquitectura: monolítica
+Frontend: HTML, CSS y JavaScript
+Persistencia: Spring Data JPA
+Seguridad administrativa: Spring Security con sesión
+Base de datos local: H2
+Base de datos de producción: Azure SQL Database
+Contenedor: Docker
+Despliegue: Azure Container Apps
+```
+
+La Fase 16 ya había demostrado que la imagen Docker funcionaba localmente tanto con H2 como con el perfil `prod` conectado a Azure SQL. Por tanto, la Fase 17 no debía corregir ni rediseñar la aplicación: debía publicar la misma imagen en Azure y proporcionar su configuración mediante variables de entorno y secretos.
+
+---
+
+# 1. Objetivo de la fase
+
+El objetivo fue desplegar públicamente Admitionum con esta arquitectura:
+
+```text
+Usuario
+   │
+   │ HTTPS
+   ▼
+Azure Container Apps
+   │
+   │ ejecuta una imagen privada
+   ▼
+Azure Container Registry
+   │
+   │ contiene admitionum:phase17-1
+   ▼
+Spring Boot 4.1.0 + Java 25
+   │
+   │ JDBC cifrado
+   ▼
+Azure SQL Database
+```
+
+La imagen local no podía utilizarse directamente desde Container Apps. Primero fue necesario etiquetarla y subirla a Azure Container Registry.
+
+El resultado buscado era:
+
+```text
+[OK] Imagen Docker almacenada en ACR.
+[OK] Container Apps Environment creado.
+[OK] Container App pública creada.
+[OK] HTTPS proporcionado por Azure.
+[OK] Puerto interno 8080.
+[OK] Perfil Spring prod.
+[OK] Conexión con Azure SQL.
+[OK] Secretos fuera del código y de Git.
+[OK] Escalado de 0 a 1 réplica.
+[OK] Panel administrativo operativo.
+[OK] Formulario público operativo desde Internet.
+```
+
+---
+
+# 2. Alcance y decisiones
+
+La configuración aplicada fue:
+
+```text
+Plan: Consumption
+CPU: 0.5 vCPU
+Memoria: 1 GiB
+Réplicas mínimas: 0
+Réplicas máximas: 1
+Ingress: externo
+Transporte: auto
+Puerto interno: 8080
+HTTPS público: administrado por Azure
+Perfil Spring: prod
+Modo de revisiones: single
+```
+
+Se mantuvo una única réplica máxima porque la sesión administrativa de Spring Security se almacena en memoria. Con varias réplicas, una petición podría llegar a una instancia diferente y perder el contexto de sesión.
+
+La reducción a cero permite que la aplicación se detenga cuando no recibe tráfico. Esto reduce el consumo de ejecución de Container Apps, aunque Azure Container Registry, Azure SQL y los logs pueden continuar generando costes.
+
+Recursos utilizados:
+
+| Recurso | Nombre | Función |
+|---|---|---|
+| Azure SQL Server | `admitionum-sql-portfolio` | Servidor SQL existente |
+| Azure SQL Database | `admitionum` | Base de datos existente |
+| Azure Container Registry | `admitionumacrfraner17` | Registro privado de imágenes |
+| Container Apps Environment | `admitionum-env` | Entorno administrado |
+| Container App | `admitionum-app` | Aplicación pública |
+| Imagen | `admitionum:phase17-1` | Versión desplegada |
+| Revisión | `admitionum-app--phase17-1` | Revisión ejecutada |
+
+---
+
+# 3. Elementos excluidos
+
+No se desarrollaron:
+
+```text
+GitHub Actions
+Despliegue automático
+Dominio personalizado
+Azure Key Vault
+Managed Identity
+Microsoft Entra ID
+Private Endpoint
+Red virtual personalizada
+Application Gateway
+Azure Front Door
+Kubernetes
+Bicep
+Terraform
+```
+
+Tampoco se modificaron:
+
+```text
+Código Java
+Controladores
+Servicios
+Repositorios
+DTO
+HTML
+CSS
+JavaScript
+pom.xml
+Dockerfile
+application-prod.properties
+database/schema.sql
+```
+
+Las incidencias encontradas pertenecían a la configuración y a las credenciales del entorno, no al código de Admitionum.
+
+---
+
+# 4. Comprobaciones previas
+
+Antes de crear recursos se verificó que Phase16 estuviera integrada en `main` y que el proyecto conservara un árbol de trabajo limpio:
+
+```powershell
+git status
+git branch --show-current
+git log --oneline -5
+
+git switch main
+git pull
+
+Get-ChildItem Dockerfile
+Get-ChildItem .dockerignore
+```
+
+También se ejecutaron las pruebas:
+
+```powershell
+.\mvnw.cmd clean test
+```
+
+Resultado obligatorio:
+
+```text
+BUILD SUCCESS
+```
+
+Se realizó una comprobación local de la imagen:
+
+```powershell
+.\mvnw.cmd clean package
+docker build -t admitionum:phase17 .
+
+docker run `
+    --name admitionum-phase17-control `
+    --rm `
+    -p 8080:8080 `
+    --env-file .env `
+    admitionum:phase17
+```
+
+Con el contenedor iniciado, el control principal fue:
+
+```powershell
+Invoke-RestMethod `
+    -Uri "http://localhost:8080/api/public/health"
+```
+
+También se comprobó:
+
+```text
+http://localhost:8080/admin/
+```
+
+Estas pruebas permitieron separar un posible problema de la imagen de un problema específico del despliegue Azure.
+
+---
+
+# 5. Preparación de Azure
+
+Se comprobó Azure CLI, la sesión y la suscripción:
+
+```powershell
+az version
+az login
+
+az account show `
+    --query "{Suscripcion:name,Id:id,Tenant:tenantId}" `
+    --output table
+```
+
+Se preparó la extensión de Container Apps y los proveedores:
+
+```powershell
+az extension add `
+    --name containerapp `
+    --upgrade
+
+az provider register --namespace Microsoft.App
+az provider register --namespace Microsoft.OperationalInsights
+az provider register --namespace Microsoft.ContainerRegistry
+```
+
+Se localizaron el grupo y la región del servidor SQL existente:
+
+```powershell
+az resource list `
+    --name "admitionum-sql-portfolio" `
+    --resource-type "Microsoft.Sql/servers" `
+    --query "[0].{Grupo:resourceGroup,Region:location}" `
+    --output table
+```
+
+Las variables utilizadas durante la fase fueron:
+
+```powershell
+$AdmSqlResourceGroup = "GRUPO_OBTENIDO_DE_AZURE"
+$AdmResourceGroup = $AdmSqlResourceGroup
+$AdmLocation = "REGION_OBTENIDA_DE_AZURE"
+
+$AdmRegistry = "admitionumacrfraner17"
+$AdmEnvironment = "admitionum-env"
+$AdmContainerApp = "admitionum-app"
+$AdmImageTag = "phase17-1"
+```
+
+Estas variables solo existían en la terminal activa y no se almacenaron en Git.
+
+También se mantuvo la recomendación de configurar un presupuesto y alertas de costes en Azure. Las alertas informan, pero no detienen automáticamente los recursos.
+
+---
+
+# 6. Azure Container Registry
+
+Se comprobó la disponibilidad del nombre:
+
+```powershell
+az acr check-name `
+    --name $AdmRegistry `
+    --query "{Disponible:nameAvailable,Motivo:reason}" `
+    --output table
+```
+
+Se creó un registro Basic:
+
+```powershell
+az acr create `
+    --resource-group $AdmResourceGroup `
+    --name $AdmRegistry `
+    --location $AdmLocation `
+    --sku Basic
+```
+
+Se inició sesión y se obtuvo el servidor completo:
+
+```powershell
+az acr login --name $AdmRegistry
+
+$AdmLoginServer = az acr show `
+    --name $AdmRegistry `
+    --query loginServer `
+    --output tsv
+```
+
+El valor obtenido tenía la forma:
+
+```text
+admitionumacrfraner17.azurecr.io
+```
+
+Esta dirección no es una página web. Es el endpoint privado del registro de imágenes.
+
+La imagen se etiquetó y subió:
+
+```powershell
+docker tag `
+    admitionum:phase17 `
+    "$AdmLoginServer/admitionum:$AdmImageTag"
+
+docker push "$AdmLoginServer/admitionum:$AdmImageTag"
+```
+
+La etiqueta se verificó con:
+
+```powershell
+az acr repository show-tags `
+    --name $AdmRegistry `
+    --repository admitionum `
+    --output table
+```
+
+Resultado esperado y obtenido:
+
+```text
+phase17-1
+```
+
+Durante el diagnóstico posterior, los eventos de Container Apps confirmaron que Azure podía descargar correctamente esta imagen. Por tanto, ACR no era la causa del fallo de arranque.
+
+---
+
+# 7. Acceso desde Azure a Azure SQL
+
+Como la fase no incluía VNet, Private Link ni NAT Gateway, se creó la regla MVP:
+
+```powershell
+az sql server firewall-rule create `
+    --resource-group $AdmSqlResourceGroup `
+    --server "admitionum-sql-portfolio" `
+    --name "AllowAzureServices" `
+    --start-ip-address "0.0.0.0" `
+    --end-ip-address "0.0.0.0"
+```
+
+Esta regla permite que servicios alojados en Azure intenten alcanzar el servidor. No concede acceso a la base por sí misma: continúan siendo necesarios el usuario, la contraseña, la base correcta y los permisos SQL.
+
+La regla es deliberadamente más permisiva que una red privada. Se aceptó únicamente como solución MVP y deberá revisarse en una futura fase de endurecimiento de seguridad.
+
+---
+
+# 8. Creación del entorno y preparación de secretos
+
+Se creó el entorno administrado:
+
+```powershell
+az containerapp env create `
+    --name $AdmEnvironment `
+    --resource-group $AdmResourceGroup `
+    --location $AdmLocation
+```
+
+Para el despliegue manual se habilitó temporalmente la cuenta administrativa de ACR:
+
+```powershell
+az acr update `
+    --name $AdmRegistry `
+    --admin-enabled true
+```
+
+Las credenciales se cargaron en variables sin imprimir la contraseña:
+
+```powershell
+$AdmRegistryUsername = az acr credential show `
+    --name $AdmRegistry `
+    --query username `
+    --output tsv
+
+$AdmRegistryPassword = az acr credential show `
+    --name $AdmRegistry `
+    --query "passwords[0].value" `
+    --output tsv
+```
+
+Las contraseñas SQL y administrativa se solicitaron mediante `Read-Host -AsSecureString`:
+
+```powershell
+$AdmSqlPasswordSecure = Read-Host `
+    "Contraseña SQL de admitionum_app" `
+    -AsSecureString
+
+$AdmSqlPassword = [System.Net.NetworkCredential]::new(
+    "",
+    $AdmSqlPasswordSecure
+).Password
+```
+
+La conexión JDBC utilizada fue:
+
+```powershell
+$AdmJdbcUrl = "jdbc:sqlserver://admitionum-sql-portfolio.database.windows.net:1433;databaseName=admitionum;encrypt=true;trustServerCertificate=false;loginTimeout=30;"
+```
+
+No se incluyó ninguna contraseña en el código, en el `Dockerfile`, en `application-prod.properties` ni en Git.
+
+---
+
+# 9. Creación de `admitionum-app`
+
+La Container App se creó con la imagen privada, ingress externo, puerto 8080, escalado 0..1 y secretos:
+
+```powershell
+az containerapp create `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --environment $AdmEnvironment `
+    --image "$AdmLoginServer/admitionum:$AdmImageTag" `
+    --registry-server $AdmLoginServer `
+    --registry-username $AdmRegistryUsername `
+    --registry-password $AdmRegistryPassword `
+    --ingress external `
+    --target-port 8080 `
+    --transport auto `
+    --cpu 0.5 `
+    --memory 1.0Gi `
+    --min-replicas 0 `
+    --max-replicas 1 `
+    --revision-suffix phase17-1 `
+    --secrets `
+        "sql-password=$AdmSqlPassword" `
+        "admin-username=$AdmAdminUsername" `
+        "admin-password=$AdmAdminPassword" `
+    --env-vars `
+        "SPRING_PROFILES_ACTIVE=prod" `
+        "SPRING_DATASOURCE_URL=$AdmJdbcUrl" `
+        "SPRING_DATASOURCE_USERNAME=admitionum_app" `
+        "SPRING_DATASOURCE_PASSWORD=secretref:sql-password" `
+        "ADMIN_USERNAME=secretref:admin-username" `
+        "ADMIN_PASSWORD=secretref:admin-password"
+```
+
+La revisión resultante fue:
+
+```text
+admitionum-app--phase17-1
+```
+
+Container Apps creó además un secreto interno para acceder al registro privado. Por ello, al listar los secretos aparecieron cuatro nombres:
+
+```text
+admin-username
+admitionumacrfraner17azurecrio-admitionumacrfraner17
+sql-password
+admin-password
+```
+
+El secreto largo generado para ACR era esperado y no debía eliminarse, porque permitía descargar la imagen privada.
+
+---
+
+# 10. Primera incidencia — La revisión no llegaba a estar disponible
+
+Después de la creación, la revisión no terminaba como `Healthy / Running`. Los eventos mostraron avisos parecidos a:
+
+```text
+ProbeFailed
+ContainerTerminated
+ProcessExited
+exit code 1
+```
+
+También se observaron fallos repetidos de la sonda de inicio.
+
+## Diagnóstico inicial
+
+Los eventos demostraban que:
+
+```text
+[OK] Azure encontró el registro.
+[OK] Azure descargó la imagen.
+[OK] Azure creó la réplica.
+[OK] El contenedor comenzó a ejecutar Java.
+[ERROR] El proceso Java terminó con código 1.
+```
+
+Por tanto, no se debía modificar todavía:
+
+```text
+ACR
+Dockerfile
+puerto 8080
+ingress
+sondas
+CPU
+memoria
+```
+
+El fallo de la sonda era una consecuencia: la sonda no podía obtener respuesta porque Spring Boot había terminado. La causa debía buscarse en el log de consola de la aplicación.
+
+---
+
+# 11. Obtención correcta de los logs
+
+Con `min-replicas = 0`, la aplicación podía reducirse a cero. Para provocar un nuevo intento de arranque se obtuvo el FQDN y se realizó una petición:
+
+```powershell
+$AdmFqdn = az containerapp show `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --query "properties.configuration.ingress.fqdn" `
+    --output tsv
+
+try {
+    Invoke-WebRequest `
+        -Uri "https://$AdmFqdn/" `
+        -UseBasicParsing `
+        -TimeoutSec 30
+}
+catch {
+    Write-Host $_.Exception.Message
+}
+```
+
+Un error temporal, un `502` o un timeout durante esta operación no demostraba un nuevo problema. La petición solo pretendía solicitar una réplica.
+
+Inmediatamente después se consultó el log de la revisión concreta:
+
+```powershell
+az containerapp logs show `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --revision $AdmRevision `
+    --type console `
+    --tail 300 `
+    --format text
+```
+
+Esta consulta reveló la causa real.
+
+---
+
+# 12. Causa raíz — SQL Server Error 18456
+
+Spring Boot comenzó correctamente:
+
+```text
+Starting AdmitionumApplication
+The following 1 profile is active: "prod"
+Tomcat initialized with port 8080
+HikariPool-1 - Starting...
+```
+
+Después, Azure SQL devolvió:
+
+```text
+ErrorCode: 18456
+SQLState: S0001
+Login failed for user 'admitionum_app'
+```
+
+La excepción principal fue:
+
+```text
+com.microsoft.sqlserver.jdbc.SQLServerException:
+Login failed for user 'admitionum_app'
+```
+
+Esto demostraba:
+
+```text
+[OK] Java 25 funcionaba.
+[OK] Spring Boot se iniciaba.
+[OK] El perfil prod estaba activo.
+[OK] Tomcat utilizaba el puerto 8080.
+[OK] La URL JDBC alcanzaba Azure SQL.
+[OK] El firewall permitía llegar al servidor.
+[OK] El nombre de usuario enviado era admitionum_app.
+[ERROR] La contraseña no coincidía con la configurada para ese usuario.
+```
+
+No era un problema de ACR, red, puerto, firewall, esquema ni memoria.
+
+---
+
+# 13. El error de dialecto de Hibernate era secundario
+
+Después del rechazo de SQL aparecía:
+
+```text
+Unable to determine Dialect without JDBC metadata
+```
+
+La relación correcta era:
+
+```text
+Contraseña SQL incorrecta
+        │
+        ▼
+Azure SQL rechaza la conexión
+        │
+        ▼
+Hibernate no puede leer metadatos JDBC
+        │
+        ▼
+Hibernate no puede detectar el dialecto
+```
+
+No se añadió manualmente:
+
+```properties
+hibernate.dialect=...
+```
+
+Tampoco se cambió:
+
+```properties
+spring.jpa.hibernate.ddl-auto=validate
+```
+
+Configurar el dialecto no habría solucionado la autenticación y habría ocultado un síntoma útil.
+
+---
+
+# 14. Aclaración sobre variables y secretos vacíos
+
+Al consultar las variables se observó:
+
+```text
+SPRING_DATASOURCE_USERNAME  admitionum_app
+SPRING_DATASOURCE_PASSWORD
+```
+
+La contraseña aparentemente vacía generó dudas. Sin embargo, una variable vinculada a un secreto no debe mostrar el valor directamente.
+
+La configuración correcta es conceptualmente:
+
+```json
+{
+  "name": "SPRING_DATASOURCE_PASSWORD",
+  "secretRef": "sql-password"
+}
+```
+
+Para comprobarlo sin mostrar la contraseña:
+
+```powershell
+az containerapp show `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --query "properties.template.containers[0].env[?name=='SPRING_DATASOURCE_PASSWORD'].{Variable:name,ReferenciaSecreto:secretRef}" `
+    --output json
+```
+
+Resultado correcto:
+
+```json
+[
+  {
+    "Variable": "SPRING_DATASOURCE_PASSWORD",
+    "ReferenciaSecreto": "sql-password"
+  }
+]
+```
+
+La columna `value` vacía no significaba que el secreto no existiera. Significaba que el valor procedía de `secretRef`.
+
+---
+
+# 15. Aclaración sobre `Read-Host -AsSecureString`
+
+Al introducir una contraseña con:
+
+```powershell
+$AdmSqlPasswordSecure = Read-Host `
+    "Contraseña SQL exacta de admitionum_app" `
+    -AsSecureString
+```
+
+PowerShell no mostraba letras, puntos ni asteriscos. Este comportamiento es normal y evita revelar la longitud o el contenido en pantalla.
+
+La contraseña se convertía temporalmente con:
+
+```powershell
+$AdmSqlPassword = [System.Net.NetworkCredential]::new(
+    "",
+    $AdmSqlPasswordSecure
+).Password
+```
+
+Se comprobaba únicamente su longitud:
+
+```powershell
+$AdmSqlPassword.Length
+```
+
+Un número superior a cero confirmaba que PowerShell había capturado algún valor. No confirmaba que fuera la contraseña correcta de Azure SQL.
+
+También apareció este error al ejecutar `else` separado del bloque `if`:
+
+```text
+else : The term 'else' is not recognized...
+```
+
+En PowerShell, `if` y `else` deben enviarse juntos:
+
+```powershell
+if ([string]::IsNullOrEmpty($AdmSqlPassword)) {
+    Write-Host "ERROR: no se capturó ninguna contraseña."
+} else {
+    Write-Host "Contraseña capturada correctamente. Longitud: $($AdmSqlPassword.Length)"
+}
+```
+
+El error de `else` era sintáctico y no estaba relacionado con Azure.
+
+---
+
+# 16. Primer intento de actualizar el secreto
+
+La contraseña introducida se guardó de nuevo en Container Apps:
+
+```powershell
+az containerapp secret set `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --secrets "sql-password=$AdmSqlPassword"
+```
+
+Azure respondió:
+
+```text
+Containerapp 'admitionum-app' must be restarted in order for secret changes to take effect.
+```
+
+Este mensaje era esperado. Los secretos pertenecen a la aplicación y actualizar uno no crea automáticamente una revisión nueva ni reinicia las existentes.
+
+Se reinició la revisión:
+
+```powershell
+az containerapp revision restart `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --revision $AdmRevision
+```
+
+Al probar la URL, `Invoke-WebRequest` terminó por timeout. No se siguió reintentando a ciegas; se consultaron de nuevo los logs.
+
+El log volvió a mostrar:
+
+```text
+Login failed for user 'admitionum_app'
+```
+
+Esto confirmó que la contraseña recordada tampoco coincidía con la configurada en Azure SQL.
+
+---
+
+# 17. Solución definitiva — Restablecer y sincronizar la contraseña
+
+No era posible conocer con certeza la contraseña antigua. La solución segura fue establecer una nueva contraseña en Azure SQL y guardar exactamente la misma en Container Apps.
+
+Desde Azure Portal se abrió:
+
+```text
+SQL databases
+→ admitionum
+→ Query editor
+```
+
+Se accedió como administrador del servidor y se comprobó que la base activa fuera:
+
+```text
+admitionum
+```
+
+No debía ejecutarse la operación en `master`.
+
+Se verificó el usuario:
+
+```sql
+SELECT
+    DB_NAME() AS base_datos_actual,
+    name,
+    type_desc,
+    authentication_type_desc
+FROM sys.database_principals
+WHERE name = N'admitionum_app';
+```
+
+Después se asignó una contraseña nueva y conocida:
+
+```sql
+ALTER USER [admitionum_app]
+WITH PASSWORD = 'NUEVA_CONTRASEÑA_SEGURA';
+```
+
+La contraseña real no se incluyó en la trazabilidad. Para evitar problemas al escribir el literal SQL, se recomendó no utilizar una comilla simple en esa contraseña concreta.
+
+Una vez ejecutado correctamente `ALTER USER`, se introdujo exactamente el mismo valor en PowerShell mediante `Read-Host -AsSecureString` y se actualizó `sql-password`:
+
+```powershell
+$AdmSqlPasswordSecure = Read-Host `
+    "Introduce exactamente la nueva contraseña de admitionum_app" `
+    -AsSecureString
+
+$AdmSqlPassword = [System.Net.NetworkCredential]::new(
+    "",
+    $AdmSqlPasswordSecure
+).Password
+
+az containerapp secret set `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --secrets "sql-password=$AdmSqlPassword"
+```
+
+Se reinició de nuevo la revisión:
+
+```powershell
+az containerapp revision restart `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --revision $AdmRevision
+```
+
+El reinicio finalizó correctamente. La base y Container Apps quedaron sincronizadas con la misma contraseña.
+
+---
+
+# 18. Validación del despliegue
+
+El estado se comprobó con:
+
+```powershell
+az containerapp revision list `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --query "[].{Revision:name,Activa:properties.active,Salud:properties.healthState,Estado:properties.runningState}" `
+    --output table
+```
+
+Resultado objetivo:
+
+```text
+Activa: True
+Salud: Healthy
+Estado: Running
+```
+
+Los logs finales debían contener:
+
+```text
+The following 1 profile is active: "prod"
+HikariPool-1 - Start completed
+Started AdmitionumApplication
+```
+
+y no debían volver a contener:
+
+```text
+Login failed for user 'admitionum_app'
+```
+
+La URL pública se obtuvo con:
+
+```powershell
+$AdmFqdn = az containerapp show `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --query properties.configuration.ingress.fqdn `
+    --output tsv
+
+$AdmBaseUrl = "https://$AdmFqdn"
+```
+
+Las pruebas funcionales de cierre fueron:
+
+```powershell
+Invoke-RestMethod `
+    -Method Get `
+    -Uri "$AdmBaseUrl/api/public/health"
+
+Start-Process "$AdmBaseUrl/admin/"
+```
+
+También se comprobó el formulario con una invitación activa y el acceso desde un dispositivo móvil mediante HTTPS.
+
+---
+
+# 19. Escalado a cero y timeouts
+
+Con:
+
+```text
+min replicas = 0
+```
+
+la primera petición puede tardar porque Azure debe:
+
+```text
+Recibir la petición
+→ crear una réplica
+→ iniciar el contenedor
+→ arrancar Java
+→ conectar con Azure SQL
+→ validar Hibernate
+→ servir la respuesta
+```
+
+Si Azure SQL Serverless también está pausado, se suma su tiempo de reanudación.
+
+Por ello, un timeout aislado de `Invoke-WebRequest` no debe interpretarse inmediatamente como un error nuevo. El procedimiento correcto es:
+
+```text
+1. Solicitar la URL una vez.
+2. Consultar el estado de la revisión.
+3. Leer los logs de consola.
+4. Identificar la primera excepción real.
+5. No reconstruir la imagen sin evidencia de un cambio de código.
+```
+
+Durante esta fase, el timeout persistente estaba provocado por el cierre de Spring Boot debido al error `18456`, no solo por el arranque en frío.
+
+---
+
+# 20. Limpieza correcta de variables sensibles
+
+Una vez actualizada la contraseña en Azure SQL, actualizado el secreto y reiniciada la revisión, las variables locales podían eliminarse:
+
+```powershell
+$AdmSqlPasswordSecure.Dispose()
+$AdmAdminPasswordSecure.Dispose()
+
+$AdmSqlPassword = $null
+$AdmSqlPasswordSecure = $null
+$AdmAdminPassword = $null
+$AdmAdminPasswordSecure = $null
+$AdmRegistryPassword = $null
+
+Remove-Variable AdmSqlPassword -ErrorAction SilentlyContinue
+Remove-Variable AdmSqlPasswordSecure -ErrorAction SilentlyContinue
+Remove-Variable AdmAdminPassword -ErrorAction SilentlyContinue
+Remove-Variable AdmAdminPasswordSecure -ErrorAction SilentlyContinue
+Remove-Variable AdmRegistryPassword -ErrorAction SilentlyContinue
+```
+
+Se produjo una duda sobre si debían conservarse para continuar con el punto 27. El punto 27 únicamente consulta la revisión:
+
+```powershell
+az containerapp revision list ...
+```
+
+Por tanto, no utiliza ninguna contraseña. La regla definitiva es:
+
+```text
+Conservar las variables sensibles solo hasta terminar la operación que las necesita.
+Después de actualizar los secretos y reiniciar correctamente, eliminarlas.
+Las consultas de estado, revisión y logs no necesitan esas variables.
+```
+
+Eliminar una variable local de PowerShell no elimina el secreto almacenado en Azure.
+
+---
+
+# 21. Comprobación segura de secretos
+
+Los nombres se listaron sin mostrar valores:
+
+```powershell
+az containerapp secret list `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --query "[].name" `
+    --output table
+```
+
+Las variables se comprobaron con:
+
+```powershell
+az containerapp show `
+    --name $AdmContainerApp `
+    --resource-group $AdmResourceGroup `
+    --query "properties.template.containers[0].env" `
+    --output table
+```
+
+Los valores sensibles debían aparecer mediante referencias como:
+
+```text
+SPRING_DATASOURCE_PASSWORD → secretRef: sql-password
+ADMIN_USERNAME             → secretRef: admin-username
+ADMIN_PASSWORD             → secretRef: admin-password
+```
+
+No era necesario ni recomendable imprimir sus valores reales para verificar la configuración.
+
+---
+
+# 22. Diagnóstico resumido de la incidencia principal
+
+La secuencia real fue:
+
+```text
+Container App creada
+        │
+        ▼
+Azure descarga correctamente la imagen desde ACR
+        │
+        ▼
+Java inicia Spring Boot con perfil prod
+        │
+        ▼
+HikariCP intenta conectar con Azure SQL
+        │
+        ▼
+Azure SQL devuelve 18456
+        │
+        ▼
+Hibernate no puede leer metadatos
+        │
+        ▼
+Aparece el mensaje secundario de dialecto
+        │
+        ▼
+Spring Boot termina con código 1
+        │
+        ▼
+La startup probe falla
+        │
+        ▼
+La URL pública devuelve timeout/502
+```
+
+La solución aplicada fue:
+
+```text
+Verificar admitionum_app en la base admitionum
+        │
+        ▼
+Asignar una contraseña nueva mediante ALTER USER
+        │
+        ▼
+Guardar el mismo valor en el secreto sql-password
+        │
+        ▼
+Reiniciar admitionum-app--phase17-1
+        │
+        ▼
+Spring Boot conecta y completa el arranque
+```
+
+---
+
+# 23. Qué no debía hacerse
+
+Ante esta incidencia no debía:
+
+```text
+Cambiar el Dockerfile.
+Cambiar el puerto 8080.
+Reconstruir la imagen sin cambios de código.
+Ampliar CPU o memoria sin un error 137.
+Modificar las sondas antes de leer la excepción de Spring.
+Añadir manualmente el dialecto de Hibernate.
+Desactivar ddl-auto=validate.
+Usar permanentemente el administrador SQL en la aplicación.
+Mostrar secretos en logs o en la trazabilidad.
+Crear una nueva revisión para cada intento sin necesidad.
+Crear un commit vacío.
+```
+
+La evidencia debía leerse en este orden:
+
+```text
+1. Eventos del sistema: ¿se descarga y ejecuta la imagen?
+2. Logs de consola: ¿qué excepción termina Spring Boot?
+3. Primera causa externa: SQL, red, credenciales o esquema.
+4. Mensajes posteriores: determinar si son causa o consecuencia.
+```
+
+---
+
+# 24. Diferencia entre incidencias 40613 y 18456
+
+La Fase 16.1 había encontrado:
+
+```text
+40613 → base Azure SQL Serverless pausada o reanudándose
+```
+
+La Fase 17 encontró:
+
+```text
+18456 → autenticación rechazada para admitionum_app
+```
+
+No deben tratarse igual:
+
+| Código | Significado práctico | Solución |
+|---|---|---|
+| `40613` | La base no está temporalmente disponible | Esperar a que esté Online y reintentar |
+| `18456` | Usuario o contraseña rechazados | Verificar/restablecer credenciales y sincronizar el secreto |
+
+En ambos casos puede aparecer después el error de dialecto, porque Hibernate no logra leer metadatos. Ese mensaje continúa siendo secundario.
+
+---
+
+# 25. Git y archivos modificados
+
+La fase creó y configuró recursos externos en Azure, pero no requirió cambios en el repositorio.
+
+Se comprobó:
+
+```powershell
+git status
+```
+
+Resultado esperado:
+
+```text
+nothing to commit, working tree clean
+```
+
+No se creó un commit vacío.
+
+No se subieron:
+
+```text
+.env
+contraseñas
+credenciales de ACR
+valores de secretos
+consultas SQL con contraseñas reales
+salidas que expusieran credenciales
+```
+
+La automatización del despliegue corresponde a la Fase 18.
+
+---
+
+# 26. Criterios de cierre actualizados
+
+```text
+[x] Phase16 estaba integrada en main.
+[x] mvnw clean test terminó con BUILD SUCCESS.
+[x] La imagen admitionum:phase17 funcionó localmente.
+[x] Se comprobó la suscripción de Azure.
+[x] Se identificaron grupo de recursos y región.
+[x] Se contempló la protección frente a costes.
+[x] Se creó Azure Container Registry Basic.
+[x] Se subió admitionum:phase17-1 a ACR.
+[x] Se creó admitionum-env.
+[x] Se creó admitionum-app.
+[x] Se configuraron 0.5 CPU y 1 GiB.
+[x] Se configuró el escalado entre 0 y 1 réplica.
+[x] Se habilitó ingress externo.
+[x] Se configuró el puerto interno 8080.
+[x] Azure proporcionó una URL HTTPS.
+[x] Se activó SPRING_PROFILES_ACTIVE=prod.
+[x] La contraseña SQL se almacenó como secreto.
+[x] Las credenciales administrativas se almacenaron como secretos.
+[x] Las variables sensibles referencian secretRef.
+[x] No se almacenaron secretos en Git.
+[x] ACR permitió descargar la imagen privada.
+[x] Se identificó que ProbeFailed era una consecuencia.
+[x] Se capturó la excepción completa de Spring Boot.
+[x] Se diagnosticó SQL Server Error 18456.
+[x] No se confundió el error de dialecto con la causa principal.
+[x] Se verificó el usuario admitionum_app en la base admitionum.
+[x] Se restableció su contraseña sin documentar el valor.
+[x] Se actualizó sql-password con el mismo valor.
+[x] Se reinició la revisión para aplicar el secreto.
+[x] El reinicio finalizó correctamente.
+[x] Azure SQL aceptó la autenticación.
+[x] Hibernate pudo validar el esquema.
+[x] Los logs mostraron Started AdmitionumApplication.
+[x] /api/public/health respondió desde Azure.
+[x] /admin/ solicitó autenticación.
+[x] El dashboard y la descarga CSV funcionaron.
+[x] Una invitación válida pudo consultarse desde Internet.
+[x] La respuesta se guardó y pudo actualizarse en Azure SQL.
+[x] La aplicación se comprobó desde un móvil.
+[x] Las variables sensibles locales se eliminaron al terminar.
+[x] No se modificó el código Java.
+[x] No se modificó el Dockerfile.
+[x] No se creó GitHub Actions.
+[x] No se creó un commit vacío.
+```
+
+---
+
+# 27. Resultado final
+
+Admitionum quedó desplegado mediante Azure Container Apps utilizando la misma imagen Docker validada en la Fase 16.
+
+La arquitectura final de la fase es:
+
+```text
+Internet
+   │
+   │ HTTPS administrado por Azure
+   ▼
+admitionum-app
+   │
+   │ imagen privada
+   ▼
+admitionumacrfraner17.azurecr.io/admitionum:phase17-1
+   │
+   │ Spring Boot perfil prod
+   ▼
+admitionum-sql-portfolio.database.windows.net
+   │
+   ▼
+Base admitionum
+```
+
+La incidencia principal no requirió cambios de aplicación. Se resolvió sincronizando la contraseña del usuario contenido `admitionum_app` con el secreto `sql-password` de Container Apps.
+
+Quedaron documentadas las diferencias entre:
+
+```text
+Error de imagen o ACR
+Error de red o firewall
+Error transitorio 40613
+Error de autenticación 18456
+Mensaje secundario de dialecto
+Fallo consecuente de startup probe
+Timeout provocado por una aplicación que no completa el arranque
+```
+
+## Estado final
+
+```text
+Fase 17 — Completada
+```
+
+## Siguiente fase
+
+Según el Documento Maestro:
+
+```text
+Fase 18 — Automatizar construcción y despliegue mediante GitHub Actions.
+```
+
+La Fase 18 deberá automatizar la construcción, publicación y despliegue sin introducir secretos en el repositorio y sin alterar las decisiones funcionales ya consolidadas.
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+
+Fase 18
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
