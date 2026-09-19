@@ -1,0 +1,166 @@
+name: CI/CD Admitionum
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "traceability*.txt"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "traceability*.txt"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Allow Maven Wrapper execution
+        run: chmod +x mvnw
+
+      - name: Run tests and package application
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+
+      - name: Store tested JAR
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: admitionum-jar
+          path: target/admitionum-0.0.1-SNAPSHOT.jar
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: Build image and deploy to Azure
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: admitionum-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+      ACR_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY }}
+      ACR_LOGIN_SERVER: ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}
+      IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+      IMAGE_REFERENCE: ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:${{ github.sha }}
+      REVISION_SUFFIX: gha-${{ github.run_number }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download tested JAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: admitionum-jar
+          path: target
+
+      - name: Build Docker image
+        run: docker build --pull --tag "$IMAGE_REFERENCE" .
+
+      - name: Log in to Azure with OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure Container Apps extension
+        run: az extension add --name containerapp --upgrade --yes
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Push Docker image
+        run: docker push "$IMAGE_REFERENCE"
+
+      - name: Update Azure Container App
+        run: >-
+          az containerapp update
+          --name "$CONTAINER_APP_NAME"
+          --resource-group "$RESOURCE_GROUP"
+          --image "$IMAGE_REFERENCE"
+          --revision-suffix "$REVISION_SUFFIX"
+          --output none
+
+      - name: Verify deployed image
+        shell: bash
+        run: |
+          deployed_image="$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)"
+
+          if [[ "$deployed_image" != "$IMAGE_REFERENCE" ]]; then
+            echo "::error::The deployed image does not match the image built by this workflow."
+            exit 1
+          fi
+
+      - name: Verify public health endpoint
+        shell: bash
+        run: |
+          fqdn="$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query 'properties.configuration.ingress.fqdn' \
+            --output tsv)"
+
+          health_url="https://${fqdn}/api/public/health"
+
+          for attempt in {1..20}; do
+            response="$(curl --silent --show-error --max-time 30 "$health_url" || true)"
+
+            if jq -e \
+              '.status == "ok" and .application == "Admitionum"' \
+              >/dev/null 2>&1 <<<"$response"; then
+              echo "Admitionum is healthy at $health_url"
+              exit 0
+            fi
+
+            echo "Health check attempt ${attempt}/20 did not succeed."
+            sleep 15
+          done
+
+          echo "::error::Admitionum did not pass the health check."
+          az containerapp revision list \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query '[].{Revision:name,Active:properties.active,Health:properties.healthState,State:properties.runningState}' \
+            --output table
+          exit 1
+
+      - name: Log out from Azure
+        if: always()
+        run: az logout || true
