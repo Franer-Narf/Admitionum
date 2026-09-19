@@ -138,11 +138,11 @@ Forma de ayudarme:
 
 Estado actual completado:
 
-Fase 17
+Fase 18
 
 Fase que quiero desarrollar:
 
-Fase 18
+Fase 19
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
 
@@ -40764,5 +40764,936 @@ ________________________________________________________________________________
 
 
 Fase 18
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+TRAZABILIDAD V18 — AUTOMATIZACIÓN CI/CD CON GITHUB ACTIONS, OIDC Y AZURE
+
+Proyecto: Admitionum
+Repositorio: Franer-Narf/Admitionum
+Fase: 18
+Fecha de cierre: 19 de septiembre de 2026
+Estado: COMPLETADA
+
+===============================================================================
+0. FINALIDAD DE ESTE DOCUMENTO
+===============================================================================
+
+Este documento registra de forma completa la ejecución de la Fase 18 de
+Admitionum. Debe utilizarse como contexto maestro en futuras conversaciones
+para no repetir pasos, no crear caminos alternativos y no modificar decisiones
+que ya fueron comprobadas.
+
+La Fase 18 automatizó las pruebas, la construcción de la aplicación, la
+creación de la imagen Docker, su publicación en Azure Container Registry y el
+despliegue en Azure Container Apps mediante GitHub Actions.
+
+El usuario está aprendiendo programación y administración cloud. Por ello,
+cualquier continuación del proyecto debe:
+
+- Explicar los pasos con claridad y en orden.
+- Utilizar un único procedimiento recomendado, salvo que exista una incidencia.
+- Indicar exactamente dónde ejecutar cada comando.
+- Usar PowerShell para los comandos locales de Windows.
+- No dar por supuesto que una variable de PowerShell es su valor literal.
+- No solicitar ni mostrar contraseñas, cadenas de conexión o datos personales.
+- No recrear recursos que ya existen sin diagnosticar primero el error.
+- Conservar las decisiones y nombres registrados en esta trazabilidad.
+
+Esta fase no cambió la lógica funcional de Admitionum. No se modificaron el
+formulario, el panel de administración, la base de datos, el modelo de datos,
+la autenticación interna, el HTML, el CSS, JavaScript, el pom.xml ni el
+Dockerfile. El cambio principal fue la incorporación del workflow de CI/CD.
+
+===============================================================================
+1. ESTADO DEL PROYECTO ANTES DE COMENZAR
+===============================================================================
+
+Antes de la Fase 18 se encontraban completadas las Fases 1 a 17.
+
+El estado de partida era el siguiente:
+
+- Admitionum era una aplicación Spring Boot.
+- Se utilizaba Java 25 y Maven Wrapper.
+- Existían 64 pruebas automatizadas.
+- La aplicación podía empaquetarse como JAR.
+- Existía una imagen Docker funcional.
+- Azure SQL estaba configurado para producción.
+- Azure Container Registry ya almacenaba la imagen del proyecto.
+- Azure Container Apps ejecutaba la aplicación con el perfil prod.
+- El endpoint público /api/public/health respondía correctamente.
+- El administrador, el formulario de invitaciones y la exportación CSV
+  funcionaban en Azure.
+- El despliegue de la Fase 17 se había realizado manualmente.
+- La etiqueta phase17-1 se conservaba como posible respaldo.
+- La rama principal era main.
+- La rama de trabajo de esta fase fue Phase18.
+
+Recursos de Azure ya existentes y reutilizados:
+
+- Grupo de recursos: rg-admitionum
+- Azure Container Registry: admitionumacrfraner17
+- Servidor de inicio de sesión de ACR:
+  admitionumacrfraner17.azurecr.io
+- Azure Container App: admitionum-app
+- Nombre de la imagen: admitionum
+
+La finalidad de la Fase 18 no era crear una segunda aplicación ni cambiar su
+arquitectura, sino automatizar de forma segura el proceso que hasta entonces se
+realizaba manualmente.
+
+===============================================================================
+2. OBJETIVO Y FLUJO DEFINITIVO DE LA FASE 18
+===============================================================================
+
+Se decidió implementar el siguiente flujo:
+
+1. Un pull request dirigido a main ejecuta las pruebas y genera el JAR.
+2. El pull request no puede desplegar en Azure.
+3. Al integrar el pull request, el push resultante sobre main vuelve a ejecutar
+   las pruebas.
+4. Si las pruebas terminan correctamente, GitHub Actions construye la imagen
+   Docker.
+5. La imagen se etiqueta con el SHA completo del commit de main.
+6. GitHub Actions inicia sesión en Azure mediante OIDC, sin contraseña.
+7. La imagen se publica en Azure Container Registry.
+8. Azure Container Apps se actualiza para utilizar esa imagen concreta.
+9. El workflow comprueba que la imagen desplegada coincide con la construida.
+10. El workflow comprueba el endpoint público de salud.
+
+Representación lógica:
+
+Pull request a main
+        |
+        v
+Pruebas Maven y generación del JAR
+        |
+        v
+Merge y push a main
+        |
+        v
+Nueva ejecución de pruebas
+        |
+        v
+Imagen Docker etiquetada con el SHA
+        |
+        v
+Publicación en ACR mediante OIDC
+        |
+        v
+Actualización de Azure Container Apps
+        |
+        v
+Verificación de imagen y /api/public/health
+
+Con este diseño, un commit que no supera las pruebas no se despliega y cada
+imagen de producción puede relacionarse directamente con un commit concreto.
+
+===============================================================================
+3. BLOQUE 18.1 — IDENTIDAD DE DESPLIEGUE Y OIDC EN AZURE
+===============================================================================
+
+Se creó una identidad técnica de Microsoft Entra para GitHub Actions con el
+nombre:
+
+admitionum-github-actions
+
+Esta identidad se utiliza exclusivamente para el despliegue automatizado. No
+forma parte del sistema de usuarios de Admitionum y no sustituye la
+autenticación del administrador ni la de las invitaciones.
+
+La autenticación se configuró mediante OpenID Connect (OIDC). Esta decisión
+evita almacenar en GitHub una contraseña permanente de Azure.
+
+La credencial federada quedó limitada a la rama main del repositorio público.
+El sujeto inmutable configurado fue:
+
+repo:Franer-Narf@174935567/Admitionum@1315184467:ref:refs/heads/main
+
+Datos conceptuales de la federación:
+
+- Emisor: https://token.actions.githubusercontent.com
+- Audiencia: api://AzureADTokenExchange
+- Repositorio autorizado: Franer-Narf/Admitionum
+- Rama autorizada: main
+- Contraseña o client secret: no existe
+
+El formato del sujeto incluye los identificadores numéricos inmutables del
+propietario y del repositorio. No debe sustituirse por un sujeto simplificado
+sin comprobar antes la configuración vigente.
+
+Se concedieron únicamente los permisos necesarios para el despliegue:
+
+- AcrPush sobre el Azure Container Registry de Admitionum, para publicar
+  imágenes.
+- Container Apps Contributor con el alcance configurado para actualizar la
+  Container App dentro de rg-admitionum.
+
+Se comprobó que:
+
+- La identidad existía.
+- La credencial federada apuntaba exactamente a main.
+- Los dos roles tenían el alcance previsto.
+- No se había creado ninguna contraseña.
+- El archivo temporal utilizado durante la configuración había sido eliminado.
+
+No se crearon y no deben crearse para este workflow:
+
+- AZURE_CLIENT_SECRET
+- AZURE_CREDENTIALS
+- Una contraseña de la identidad de despliegue
+- Credenciales de Azure SQL
+- La contraseña del administrador de Admitionum
+- Contraseñas de ACR dentro de GitHub Actions
+
+Resultado del bloque 18.1: COMPLETADO.
+
+===============================================================================
+4. BLOQUE 18.2 — SECRETS Y VARIABLES DE GITHUB
+===============================================================================
+
+En Settings > Secrets and variables > Actions se registraron tres repository
+secrets:
+
+- AZURE_CLIENT_ID
+- AZURE_TENANT_ID
+- AZURE_SUBSCRIPTION_ID
+
+Sus valores procedían de las variables de PowerShell creadas durante la
+configuración de Azure:
+
+- $AdmClientId
+- $AdmTenantId
+- $AdmSubscriptionId
+
+Incidencia o duda resuelta:
+
+El texto "$AdmClientId" no era el valor que debía escribirse en GitHub. Era el
+nombre de una variable de PowerShell que contenía el identificador real. Para
+copiar el contenido correcto se indicó:
+
+Set-Clipboard -Value $AdmClientId
+
+La misma explicación se aplicó a $AdmTenantId y $AdmSubscriptionId. Los valores
+se copiaron y guardaron uno por uno. No se incluyó el símbolo $ ni el nombre de
+la variable como valor del secret.
+
+También se registraron cinco repository variables:
+
+- AZURE_RESOURCE_GROUP = rg-admitionum
+- AZURE_CONTAINER_APP_NAME = admitionum-app
+- AZURE_CONTAINER_REGISTRY = admitionumacrfraner17
+- AZURE_CONTAINER_REGISTRY_LOGIN_SERVER =
+  admitionumacrfraner17.azurecr.io
+- IMAGE_NAME = admitionum
+
+Separación de responsabilidades:
+
+- Los secrets contienen identificadores utilizados por el inicio de sesión
+  OIDC y GitHub no vuelve a mostrar su valor después de guardarlos.
+- Las variables contienen nombres no sensibles de infraestructura.
+- Ninguno de estos campos contiene contraseñas de la aplicación o de la base
+  de datos.
+
+Resultado esperado y obtenido en la configuración:
+
+- Repository secrets: 3
+- Repository variables: 5
+
+Resultado del bloque 18.2: COMPLETADO.
+
+===============================================================================
+5. BLOQUE 18.3 — WORKFLOW DE GITHUB ACTIONS
+===============================================================================
+
+Se creó el archivo:
+
+.github/workflows/deploy.yml
+
+Nombre visible del workflow:
+
+CI/CD Admitionum
+
+Disparadores configurados:
+
+- pull_request hacia main
+- push sobre main
+- ejecución manual mediante workflow_dispatch
+
+Los cambios exclusivamente documentales se excluyeron mediante paths-ignore
+para archivos Markdown y archivos traceability*.txt.
+
+El workflow contiene dos trabajos:
+
+1. Test and package
+2. Build image and deploy to Azure
+
+El trabajo de despliegue depende del trabajo de pruebas y solo se ejecuta si:
+
+- La referencia es refs/heads/main.
+- El evento es push o workflow_dispatch.
+
+Por ello, durante un pull request el trabajo de pruebas se ejecuta, pero el
+despliegue aparece como Skipped. Este comportamiento es intencionado y protege
+Azure frente a código que todavía no está integrado en main.
+
+Contenido canónico implantado en deploy.yml:
+
+-------------------------------------------------------------------------------
+name: CI/CD Admitionum
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "traceability*.txt"
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "**/*.md"
+      - "traceability*.txt"
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 25
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Allow Maven Wrapper execution
+        run: chmod +x mvnw
+
+      - name: Run tests and package application
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify
+
+      - name: Store tested JAR
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: admitionum-jar
+          path: target/admitionum-0.0.1-SNAPSHOT.jar
+          if-no-files-found: error
+          retention-days: 1
+
+  deploy:
+    name: Build image and deploy to Azure
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: admitionum-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_CORE_OUTPUT: none
+      RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+      CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
+      ACR_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY }}
+      ACR_LOGIN_SERVER: ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}
+      IMAGE_NAME: ${{ vars.IMAGE_NAME }}
+      IMAGE_REFERENCE: ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:${{ github.sha }}
+      REVISION_SUFFIX: gha-${{ github.run_number }}-${{ github.run_attempt }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download tested JAR
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: admitionum-jar
+          path: target
+
+      - name: Build Docker image
+        run: docker build --pull --tag "$IMAGE_REFERENCE" .
+
+      - name: Log in to Azure with OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Install Azure Container Apps extension
+        run: az extension add --name containerapp --upgrade --yes
+
+      - name: Log in to Azure Container Registry
+        run: az acr login --name "$ACR_NAME"
+
+      - name: Push Docker image
+        run: docker push "$IMAGE_REFERENCE"
+
+      - name: Update Azure Container App
+        run: >-
+          az containerapp update
+          --name "$CONTAINER_APP_NAME"
+          --resource-group "$RESOURCE_GROUP"
+          --image "$IMAGE_REFERENCE"
+          --revision-suffix "$REVISION_SUFFIX"
+          --output none
+
+      - name: Verify deployed image
+        shell: bash
+        run: |
+          deployed_image="$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query 'properties.template.containers[0].image' \
+            --output tsv)"
+
+          if [[ "$deployed_image" != "$IMAGE_REFERENCE" ]]; then
+            echo "::error::The deployed image does not match the image built by this workflow."
+            exit 1
+          fi
+
+      - name: Verify public health endpoint
+        shell: bash
+        run: |
+          fqdn="$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query 'properties.configuration.ingress.fqdn' \
+            --output tsv)"
+
+          health_url="https://${fqdn}/api/public/health"
+
+          for attempt in {1..20}; do
+            response="$(curl --silent --show-error --max-time 30 "$health_url" || true)"
+
+            if jq -e \
+              '.status == "ok" and .application == "Admitionum"' \
+              >/dev/null 2>&1 <<<"$response"; then
+              echo "Admitionum is healthy at $health_url"
+              exit 0
+            fi
+
+            echo "Health check attempt ${attempt}/20 did not succeed."
+            sleep 15
+          done
+
+          echo "::error::Admitionum did not pass the health check."
+          az containerapp revision list \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query '[].{Revision:name,Active:properties.active,Health:properties.healthState,State:properties.runningState}' \
+            --output table
+          exit 1
+
+      - name: Log out from Azure
+        if: always()
+        run: az logout || true
+-------------------------------------------------------------------------------
+
+Decisiones de seguridad y fiabilidad del workflow:
+
+- Las acciones oficiales se fijaron mediante su SHA completo, no solo mediante
+  una etiqueta mutable.
+- persist-credentials se estableció en false en checkout.
+- El trabajo de pruebas solo posee contents: read.
+- El trabajo de despliegue posee contents: read e id-token: write.
+- id-token: write es necesario para OIDC; no equivale a guardar una contraseña.
+- El JAR probado se guarda como artefacto durante un día y se reutiliza en el
+  trabajo de despliegue.
+- El despliegue solo comienza si el trabajo de pruebas termina correctamente.
+- La imagen se etiqueta con github.sha, no con latest.
+- El grupo de concurrencia evita despliegues de producción simultáneos.
+- cancel-in-progress: false evita cancelar un despliegue que ya está en curso.
+- El workflow verifica tanto la referencia de la imagen como la salud de la
+  aplicación.
+- El cierre de sesión de Azure se ejecuta incluso si un paso anterior falla.
+
+No se añadió:
+
+environment: production
+
+La razón es que un environment cambiaría el sujeto del token OIDC. La
+credencial federada creada en esta fase está vinculada a la rama main, no a un
+environment de GitHub.
+
+Resultado del bloque 18.3: COMPLETADO.
+
+===============================================================================
+6. BLOQUE 18.4 — PRUEBA LOCAL, COMMIT Y PULL REQUEST
+===============================================================================
+
+Se trabajó en la rama:
+
+Phase18
+
+Antes de confirmar los cambios se verificaron el archivo, el estado de Git y
+los errores de espacios mediante:
+
+Get-Content ".github\workflows\deploy.yml"
+git diff --check
+git status --short
+
+La prueba local se ejecutó desde PowerShell con:
+
+.\mvnw.cmd clean verify
+
+El criterio exigido era BUILD SUCCESS y las 64 pruebas sin errores.
+
+El workflow se confirmó mediante el commit:
+
+1639427 ci: automate test and Azure deployment
+
+Se publicó la rama Phase18 y se creó el pull request número 15 con el objetivo
+de integrar la automatización en main.
+
+Comportamiento esperado del pull request:
+
+- Test and package: ejecutado y correcto.
+- Build image and deploy to Azure: Skipped.
+
+Que el despliegue apareciera como Skipped en el pull request era correcto. La
+identidad OIDC se había limitado a main y el propio workflow impedía desplegar
+desde un pull request.
+
+El pull request se integró en main y produjo el commit de merge:
+
+25d1c0d Merge pull request #15 from Franer-Narf/Phase18
+
+Historial observado después del merge:
+
+25d1c0d Merge pull request #15 from Franer-Narf/Phase18
+1639427 ci: automate test and Azure deployment
+af1ce53 Phase 17 completes. Updated traceability file to v17.
+c8f5d03 Added traceabitily v16.
+129b0e0 Merge pull request #14 from Franer-Narf/Phase16
+
+El repositorio local quedó en main, sincronizado con origin/main y sin cambios
+pendientes.
+
+Resultado del bloque 18.4: COMPLETADO.
+
+===============================================================================
+7. BLOQUES 18.5 Y 18.6 — DESPLIEGUE Y VERIFICACIÓN FINAL
+===============================================================================
+
+El push del merge a main inició una nueva ejecución del workflow.
+
+En esa ejecución debían completarse los dos trabajos:
+
+- Test and package
+- Build image and deploy to Azure
+
+La imagen esperada se construyó con esta estructura:
+
+admitionumacrfraner17.azurecr.io/admitionum:<SHA_COMPLETO_DE_MAIN>
+
+No se utilizó la etiqueta latest. El SHA completo permite determinar de forma
+inequívoca qué commit está desplegado.
+
+Las verificaciones finales incluyeron:
+
+1. Sincronización local de main.
+2. Comparación entre el SHA de main y la etiqueta de la imagen desplegada.
+3. Comprobación de las etiquetas existentes en ACR.
+4. Comprobación de la configuración de Azure Container Apps.
+5. Comprobación de la revisión activa y de su estado de salud.
+6. Llamada al endpoint /api/public/health.
+7. Acceso manual al panel de administración.
+8. Consulta de datos almacenados en Azure SQL.
+9. Apertura de una invitación activa.
+10. Guardado y actualización de una respuesta.
+11. Comprobación de la exportación CSV.
+
+Configuración que debía conservar Azure Container Apps:
+
+- Modo de revisión: Single
+- Réplicas mínimas: 0
+- Réplicas máximas: 1
+
+Los estados Running y ScaledToZero eran válidos siempre que la revisión
+estuviera sana. ScaledToZero es compatible con la configuración de ahorro de
+costes y no representa por sí mismo un fallo.
+
+El endpoint de salud debía devolver conceptualmente:
+
+- status: ok
+- application: Admitionum
+
+El usuario comunicó que había terminado el punto 16 de la guía. Con esa
+confirmación se dio por finalizada la implementación técnica de la Fase 18,
+quedando únicamente la elaboración y registro de esta trazabilidad para su
+cierre documental.
+
+Resultado de los bloques 18.5 y 18.6: COMPLETADOS.
+
+===============================================================================
+8. INCIDENCIA DEL PUNTO 13 — LA IMAGEN NO COINCIDÍA INICIALMENTE
+===============================================================================
+
+Durante la primera comparación entre el commit de main y la imagen indicada por
+Azure se obtuvo el siguiente error:
+
+La imagen desplegada no corresponde al commit actual de main.
+
+El comando az containerapp show también mostró este aviso:
+
+WARNING: The behavior of this command has been altered by the following
+extension: containerapp
+
+Diagnóstico realizado:
+
+- El warning de la extensión containerapp era informativo y no explicaba la
+  diferencia de imágenes.
+- La instrucción throw de PowerShell no modificó Azure ni dañó el despliegue;
+  únicamente detuvo el bloque al detectar que dos cadenas no coincidían.
+- El repositorio local estaba correctamente en main, actualizado y limpio.
+- La diferencia podía producirse si la comprobación se realizaba antes de que
+  terminara el workflow del push a main.
+- También podía mantenerse en $AdmDeployedImage un valor antiguo obtenido
+  antes de finalizar el despliegue, ya que una variable de PowerShell no se
+  actualiza automáticamente.
+
+Se indicó comprobar en GitHub Actions la ejecución asociada al commit de merge
+25d1c0d y distinguirla de la ejecución del pull request.
+
+La ejecución correcta debía indicar:
+
+- Evento: push
+- Rama: main
+- Test and package: verde
+- Build image and deploy to Azure: verde
+
+Si el trabajo de despliegue hubiera aparecido en rojo, el procedimiento correcto
+habría sido abrir el primer paso fallido y analizar su mensaje, sin volver a
+crear la identidad OIDC. Si hubiera aparecido como Skipped, se estaría viendo
+probablemente la ejecución del pull request y no la posterior al merge.
+
+Una vez terminada la ejecución, era necesario volver a consultar Azure para
+renovar $AdmDeployedImage y repetir la comparación. No bastaba con reutilizar
+el valor anterior de la variable.
+
+Lección registrada:
+
+Una diferencia temporal entre la imagen esperada y la imagen consultada no
+justifica recrear el service principal, los roles, los secrets o la Container
+App. Primero se comprueba el estado del workflow y después se vuelven a obtener
+los datos actuales de Azure.
+
+La fase pudo continuar hasta completar el punto 16, por lo que esta incidencia
+quedó cerrada sin registrar una modificación destructiva de la infraestructura.
+
+===============================================================================
+9. ERRORES PREVISTOS Y CRITERIO DE DIAGNÓSTICO
+===============================================================================
+
+AADSTS700213
+
+Posibles causas:
+
+- El trabajo no se ejecuta desde main.
+- Se añadió environment: production y cambió el sujeto OIDC.
+- El sujeto configurado en Entra no coincide con el emitido por GitHub.
+
+Acción recomendada:
+
+- Comparar el sujeto OIDC y la ejecución concreta antes de recrear nada.
+
+unauthorized al publicar en ACR
+
+Posibles causas:
+
+- El rol AcrPush todavía no se propagó.
+- El rol se asignó en un alcance equivocado.
+
+AuthorizationFailed al actualizar Container Apps
+
+Posibles causas:
+
+- Falta Container Apps Contributor.
+- El permiso todavía no se propagó.
+- El alcance del rol no incluye el recurso actualizado.
+
+client-id is empty
+
+Posibles causas:
+
+- No existe AZURE_CLIENT_ID.
+- El nombre no coincide exactamente.
+- Se escribió literalmente $AdmClientId en lugar de su contenido.
+
+No se encuentra el JAR
+
+Posibles causas:
+
+- Maven no completó el empaquetado.
+- Cambió el nombre o la versión del artefacto en pom.xml.
+- La ruta del upload o download artifact ya no coincide.
+
+El health check agota los intentos
+
+Posibles causas:
+
+- Arranque en frío de Container Apps.
+- Azure SQL se está reanudando.
+- Error SQL 40613.
+- Error de autenticación SQL 18456.
+- Otro error de arranque de Spring Boot.
+
+El workflow no aparece
+
+Posibles causas:
+
+- El archivo no está dentro de .github/workflows/.
+- El nombre real termina en deploy.yml.txt.
+- El archivo todavía no se publicó en GitHub.
+
+Regla principal:
+
+No volver a crear la identidad, los roles o los recursos cloud como primera
+respuesta a un error. Se debe localizar primero el primer paso fallido y
+diagnosticar el mensaje exacto.
+
+===============================================================================
+10. SEGURIDAD DEL REPOSITORIO PÚBLICO
+===============================================================================
+
+Después de terminar la parte técnica se revisó si mantener Admitionum como
+repositorio público podía poner en peligro el proyecto.
+
+Resultado de la revisión realizada en ese momento:
+
+- No se encontraron credenciales reales expuestas.
+- El análisis automatizado del historial disponible no detectó secretos.
+- application-prod.properties utilizaba variables de entorno.
+- El workflow utilizaba OIDC y no AZURE_CLIENT_SECRET.
+- No había copias de Azure SQL, archivos CSV con invitados ni archivos .env
+  publicados.
+- Las contraseñas presentes en ejemplos de trazabilidad eran marcadores o
+  valores de prueba, no secretos productivos.
+
+Se explicó que un repositorio público nunca tiene riesgo cero. El código y todo
+su historial pueden ser consultados y analizados por terceros.
+
+La trazabilidad hacía visibles algunos datos no secretos de infraestructura,
+como nombres de recursos, rutas y el usuario técnico de SQL. Estos datos no
+permiten autenticarse por sí solos, pero facilitan el reconocimiento del
+sistema.
+
+También se registraron dos aspectos para un endurecimiento futuro:
+
+1. Los códigos reales de invitación deben ser largos, aleatorios e
+   impredecibles. No deben utilizar nombres de familias ni patrones fáciles de
+   adivinar.
+2. El usuario administrador de ACR no debe desactivarse sin comprobar antes
+   cómo obtiene Container Apps la imagen. La migración correcta sería hacia una
+   identidad administrada y solo después se retiraría el acceso anterior.
+
+Protecciones recomendadas para GitHub:
+
+- Secret scanning
+- Push protection
+- Dependabot alerts
+- CodeQL con configuración predeterminada
+
+Nunca deben publicarse:
+
+- Datos reales de invitados
+- Códigos reales de invitaciones
+- Contraseñas
+- Tokens
+- Cadenas de conexión completas
+- Exportaciones CSV reales
+- Salidas de consola que incluyan información sensible
+
+===============================================================================
+11. QUIÉN PUEDE VER O UTILIZAR SECRETS Y VARIABLES
+===============================================================================
+
+Se aclaró lo siguiente:
+
+- Un visitante del repositorio público no puede consultar el valor de un
+  repository secret.
+- GitHub no permite volver a visualizar el valor guardado; solo sustituirlo o
+  eliminarlo.
+- El nombre de un secret puede deducirse si aparece en el YAML, pero no su
+  valor.
+- Los pull requests procedentes de forks no reciben normalmente los repository
+  secrets.
+- Una persona con permiso de escritura debe considerarse de confianza, porque
+  podría modificar un workflow para intentar utilizar los secrets.
+- Si solo el propietario tiene permisos de escritura, los visitantes no pueden
+  modificar el workflow ni usar legítimamente los secrets.
+- Los secrets no se copian al clonar, duplicar o bifurcar un repositorio.
+- Las repository variables no están diseñadas para datos sensibles y deben
+  considerarse información pública.
+
+Los valores AZURE_CLIENT_ID, AZURE_TENANT_ID y AZURE_SUBSCRIPTION_ID son
+identificadores, no contraseñas. Aun así, se conservaron como secrets. El
+permiso real de despliegue depende además de OIDC, del sujeto autorizado, de la
+rama main y de los roles asignados en Azure.
+
+===============================================================================
+12. DECISIONES TOMADAS PARA LAS SIGUIENTES FASES
+===============================================================================
+
+Después de la Fase 18 se decidió separar dos usos de Admitionum:
+
+1. Repositorio público para portfolio profesional.
+2. Repositorio privado independiente para el uso real de la boda.
+
+El repositorio público deberá mostrar las capacidades técnicas del proyecto:
+
+- Spring Boot
+- Seguridad
+- Persistencia y Azure SQL
+- Docker
+- Azure Container Registry
+- Azure Container Apps
+- GitHub Actions
+- CI/CD con OIDC
+- Pruebas automatizadas
+
+La trazabilidad técnica acumulada se retirará de la versión pública actual y se
+sustituirá por documentación adecuada para portfolio, previsiblemente:
+
+- README.md
+- docs/architecture.md
+- docs/installation-guide.md
+- docs/security.md
+- .env.example
+
+La documentación utilizará marcadores genéricos, por ejemplo:
+
+- <YOUR_RESOURCE_GROUP>
+- <YOUR_SQL_SERVER>
+- <YOUR_ADMIN_USERNAME>
+
+Eliminar un archivo de trazabilidad mediante un commit lo quita del estado
+actual, pero no de los commits antiguos. Como no se detectaron secretos reales,
+no se consideró necesario reescribir destructivamente todo el historial solo
+por motivos de presentación.
+
+Para el uso privado no debe utilizarse el botón Fork. Un fork pertenece a la
+misma red de repositorios y no proporciona la separación deseada. Se creará un
+repositorio privado nuevo, vacío e independiente, y se duplicará el contenido
+de forma controlada.
+
+Separación local recomendada:
+
+C:\Users\proto\Proyectos\admitionum-portfolio
+C:\Users\proto\Proyectos\admitionum-private
+
+El repositorio privado no heredará automáticamente:
+
+- Repository secrets
+- Repository variables
+- Permisos de GitHub
+- Credenciales federadas OIDC
+- Roles de Azure
+
+La credencial OIDC de la Fase 18 está vinculada específicamente al repositorio
+público Franer-Narf/Admitionum y a sus identificadores inmutables. No servirá
+para un repositorio privado nuevo.
+
+El entorno privado deberá disponer de forma separada de:
+
+- Su propia identidad OIDC.
+- Sus propios secrets y variables.
+- Sus propios permisos de Azure.
+- Su propia Container App.
+- Su propia base de datos.
+- Preferiblemente, su propio grupo de recursos y ACR.
+
+Objetivo de esta separación:
+
+- El repositorio público funcionará como portfolio y, si se desea, como demo
+  con datos ficticios.
+- El repositorio privado contendrá la configuración y el uso real.
+- Un cambio o incidente en el portfolio no podrá desplegar sobre el entorno
+  privado.
+- Los datos reales nunca se incorporarán al repositorio público.
+
+Estas tareas pertenecen a fases posteriores y no deben mezclarse
+retroactivamente con la implementación ya completada de la Fase 18.
+
+===============================================================================
+13. ESTADO FINAL DE LA FASE 18
+===============================================================================
+
+Estado consolidado:
+
+[COMPLETADO] Identidad OIDC sin contraseña creada.
+[COMPLETADO] Credencial federada limitada a main.
+[COMPLETADO] Rol AcrPush asignado al ACR.
+[COMPLETADO] Permiso para actualizar Azure Container Apps asignado.
+[COMPLETADO] Tres repository secrets registrados.
+[COMPLETADO] Cinco repository variables registradas.
+[COMPLETADO] Archivo .github/workflows/deploy.yml creado.
+[COMPLETADO] Pruebas y empaquetado automatizados.
+[COMPLETADO] Las 64 pruebas utilizadas por el proyecto se mantuvieron como
+             criterio de validación.
+[COMPLETADO] Pull request número 15 ejecutado.
+[COMPLETADO] CI ejecutada en el pull request.
+[COMPLETADO] Despliegue omitido intencionadamente en el pull request.
+[COMPLETADO] Merge realizado sobre main.
+[COMPLETADO] CI y CD ejecutadas desde main.
+[COMPLETADO] Imagen etiquetada mediante el SHA del commit.
+[COMPLETADO] Imagen publicada en ACR.
+[COMPLETADO] Azure Container Apps actualizado.
+[COMPLETADO] Revisión y endpoint de salud incluidos en la validación.
+[COMPLETADO] Comprobaciones funcionales finales alcanzaron el punto 16.
+[COMPLETADO] No existe AZURE_CLIENT_SECRET.
+[COMPLETADO] No se publicaron contraseñas.
+[COMPLETADO] Repositorio local main sincronizado y limpio.
+[COMPLETADO] Incidencia temporal de comparación de imagen diagnosticada sin
+             recrear ni eliminar recursos.
+[COMPLETADO] Trazabilidad de la Fase 18 generada.
+
+Commits principales de referencia:
+
+- 1639427 — ci: automate test and Azure deployment
+- 25d1c0d — Merge pull request #15 from Franer-Narf/Phase18
+
+Conclusión:
+
+La Fase 18 queda cerrada. Admitionum dispone de un proceso CI/CD automatizado,
+trazable y sin contraseña permanente de Azure en GitHub. Los pull requests
+validan el código sin desplegarlo; los cambios integrados en main se prueban,
+se empaquetan, se convierten en una imagen identificada mediante SHA, se
+publican en ACR, se despliegan en Azure Container Apps y se someten a una
+comprobación automática de salud.
+
+El siguiente trabajo no debe reabrir esta fase salvo que exista una incidencia
+real en el workflow. Las próximas fases deberán centrarse en la documentación
+de portfolio y en la creación posterior de una copia privada, independiente y
+aislada para el uso real.
+
+FIN DE LA TRAZABILIDAD V18
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+Fase 19
+
+________________________________________________________________________________________________________________________________________________________________________________________________________________________________
+
+
 
 ________________________________________________________________________________________________________________________________________________________________________________________________________________________________
