@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -740,5 +741,362 @@ class InvitationServiceTest {
 
     assertThat(stored.getAdditionalComment())
         .isNull();
+    }
+
+      @Test
+    void shouldRegisterConfirmedPublicResponse() {
+
+        LocalDateTime storedAt =
+            LocalDateTime.of(
+                2027,
+                4,
+                1,
+                12,
+                30
+            );
+
+        SaveRsvpRequest request =
+            new SaveRsvpRequest(
+                "  Ana García  ",
+                "  ana@example.com  ",
+                true,
+                3,
+                "  Sin gluten  ",
+                "   "
+            );
+
+        configurePublicRegistrationPersistence(
+            storedAt
+        );
+
+        SaveRsvpResponse result =
+            invitationService
+                .registerPublicResponse(request);
+
+        ArgumentCaptor<Invitation>
+                invitationCaptor =
+            ArgumentCaptor.forClass(
+                Invitation.class
+            );
+
+        ArgumentCaptor<RsvpResponse>
+                responseCaptor =
+            ArgumentCaptor.forClass(
+                RsvpResponse.class
+            );
+
+        verify(invitationRepository)
+            .saveAndFlush(
+                invitationCaptor.capture()
+            );
+
+        verify(rsvpResponseRepository)
+            .saveAndFlush(
+                responseCaptor.capture()
+            );
+
+        Invitation storedInvitation =
+            invitationCaptor.getValue();
+
+        RsvpResponse storedResponse =
+            responseCaptor.getValue();
+
+        assertThat(
+            storedInvitation.getAccessCode()
+        )
+            .startsWith("REG-")
+            .hasSize(40);
+
+        assertThat(
+            storedInvitation.getDisplayName()
+        ).isEqualTo("Ana García");
+
+        assertThat(
+            storedInvitation.getMaxGuests()
+        ).isEqualTo(20);
+
+        assertThat(
+            storedInvitation.getIsActive()
+        ).isTrue();
+
+        assertThat(
+            storedInvitation.getExpiresAt()
+        ).isNull();
+
+        assertThat(
+            storedResponse.getInvitation()
+        ).isSameAs(storedInvitation);
+
+        assertThat(
+            storedResponse.getGuestName()
+        ).isEqualTo("Ana García");
+
+        assertThat(
+            storedResponse.getContact()
+        ).isEqualTo("ana@example.com");
+
+        assertThat(
+            storedResponse
+                .getAttendanceConfirmed()
+        ).isTrue();
+
+        assertThat(
+            storedResponse.getAttendeeCount()
+        ).isEqualTo(3);
+
+        assertThat(
+            storedResponse.getIntolerances()
+        ).isEqualTo("Sin gluten");
+
+        assertThat(
+            storedResponse
+                .getAdditionalComment()
+        ).isNull();
+
+        assertThat(result.isSuccess())
+            .isTrue();
+
+        assertThat(result.getUpdatedAt())
+            .isEqualTo(storedAt);
+    }
+
+    @Test
+    void shouldRegisterDeclinedPublicResponse() {
+
+        LocalDateTime storedAt =
+            LocalDateTime.of(
+                2027,
+                4,
+                1,
+                13,
+                0
+            );
+
+        SaveRsvpRequest request =
+            new SaveRsvpRequest(
+                "María López",
+                "600 123 123",
+                false,
+                0,
+                null,
+                "No podré asistir"
+            );
+
+        configurePublicRegistrationPersistence(
+            storedAt
+        );
+
+        invitationService
+            .registerPublicResponse(request);
+
+        ArgumentCaptor<RsvpResponse> captor =
+            ArgumentCaptor.forClass(
+                RsvpResponse.class
+            );
+
+        verify(rsvpResponseRepository)
+            .saveAndFlush(captor.capture());
+
+        RsvpResponse storedResponse =
+            captor.getValue();
+
+        assertThat(
+            storedResponse
+                .getAttendanceConfirmed()
+        ).isFalse();
+
+        assertThat(
+            storedResponse.getAttendeeCount()
+        ).isZero();
+
+        assertThat(
+            storedResponse
+                .getAdditionalComment()
+        ).isEqualTo("No podré asistir");
+    }
+
+    @Test
+    void shouldGenerateUniqueCodeForEachRegistration() {
+
+        LocalDateTime storedAt =
+            LocalDateTime.of(
+                2027,
+                4,
+                1,
+                14,
+                0
+            );
+
+        SaveRsvpRequest request =
+            new SaveRsvpRequest(
+                "Ana García",
+                "ana@example.com",
+                true,
+                2,
+                null,
+                null
+            );
+
+        configurePublicRegistrationPersistence(
+            storedAt
+        );
+
+        invitationService
+            .registerPublicResponse(request);
+
+        invitationService
+            .registerPublicResponse(request);
+
+        ArgumentCaptor<Invitation> captor =
+            ArgumentCaptor.forClass(
+                Invitation.class
+            );
+
+        verify(
+            invitationRepository,
+            times(2)
+        ).saveAndFlush(captor.capture());
+
+        assertThat(captor.getAllValues())
+            .extracting(
+                Invitation::getAccessCode
+            )
+            .hasSize(2)
+            .doesNotHaveDuplicates()
+            .allMatch(
+                code ->
+                    code.startsWith("REG-")
+                    && code.length() == 40
+            );
+    }
+
+    @Test
+    void shouldRejectZeroAttendeesDuringPublicRegistration() {
+
+        SaveRsvpRequest request =
+            new SaveRsvpRequest(
+                "Ana García",
+                "ana@example.com",
+                true,
+                0,
+                null,
+                null
+            );
+
+        assertThatThrownBy(
+            () -> invitationService
+                .registerPublicResponse(request)
+        )
+            .isInstanceOf(
+                InvalidAttendeeCountException.class
+            )
+            .hasMessage(
+                "Debe asistir al menos una persona."
+            );
+
+        verifyNoInteractions(
+            invitationRepository,
+            rsvpResponseRepository
+        );
+    }
+
+    @Test
+    void shouldRejectAttendeesWhenPublicRegistrationIsDeclined() {
+
+        SaveRsvpRequest request =
+            new SaveRsvpRequest(
+                "Ana García",
+                "ana@example.com",
+                false,
+                2,
+                null,
+                null
+            );
+
+        assertThatThrownBy(
+            () -> invitationService
+                .registerPublicResponse(request)
+        )
+            .isInstanceOf(
+                InvalidAttendeeCountException.class
+            )
+            .hasMessage(
+                "Cuando no se confirma asistencia, "
+                    + "el número de asistentes debe "
+                    + "ser cero."
+            );
+
+        verifyNoInteractions(
+            invitationRepository,
+            rsvpResponseRepository
+        );
+    }
+
+    @Test
+    void shouldRejectPublicRegistrationAboveTwentyAttendees() {
+
+        SaveRsvpRequest request =
+            new SaveRsvpRequest(
+                "Ana García",
+                "ana@example.com",
+                true,
+                21,
+                null,
+                null
+            );
+
+        assertThatThrownBy(
+            () -> invitationService
+                .registerPublicResponse(request)
+        )
+            .isInstanceOf(
+                InvalidAttendeeCountException.class
+            )
+            .hasMessage(
+                "El número de asistentes supera "
+                    + "el máximo permitido."
+            );
+
+        verifyNoInteractions(
+            invitationRepository,
+            rsvpResponseRepository
+        );
+    }
+
+    private void configurePublicRegistrationPersistence(
+            LocalDateTime storedAt) {
+
+        given(
+            invitationRepository.saveAndFlush(
+                any(Invitation.class)
+            )
+        ).willAnswer(
+            invocation -> {
+
+                Invitation invitation =
+                    invocation.getArgument(0);
+
+                invitation.setId(100);
+
+                return invitation;
+            }
+        );
+
+        given(
+            rsvpResponseRepository.saveAndFlush(
+                any(RsvpResponse.class)
+            )
+        ).willAnswer(
+            invocation -> {
+
+                RsvpResponse response =
+                    invocation.getArgument(0);
+
+                response.setId(200);
+                response.setUpdatedAt(storedAt);
+
+                return response;
+            }
+        );
     }
 }

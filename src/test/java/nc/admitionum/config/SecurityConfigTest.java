@@ -5,6 +5,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.authenticated;
 import static org.springframework.security.test.web.servlet.response.SecurityMockMvcResultMatchers.unauthenticated;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -69,6 +70,31 @@ class SecurityConfigTest {
                 .content(requestBody)
         )
             .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void publicRegistrationPostShouldNotRequireLoginOrCsrf()
+            throws Exception {
+
+        String requestBody = """
+            {
+              "guestName": " ",
+              "contact": "",
+              "attendanceConfirmed": true,
+              "attendeeCount": 21,
+              "intolerances": "",
+              "additionalComment": ""
+            }
+            """;
+
+        mockMvc.perform(
+            post("/api/public/registrations")
+                .contentType(
+                    MediaType.APPLICATION_JSON
+                )
+                .content(requestBody)
+        )
+            .andExpect(status().isBadRequest());
     }
 
     @Test
