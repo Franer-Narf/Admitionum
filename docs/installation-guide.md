@@ -8,6 +8,7 @@ It covers:
 
 - Local development with H2.
 - Automated tests.
+- Verifying the general public registration flow.
 - Building the Spring Boot JAR.
 - Running the application with Docker.
 - Preparing Azure SQL Database.
@@ -74,6 +75,27 @@ Spring Boot
    v
 H2 persistent database
 ```
+
+The main application flow reproduced in every environment is:
+
+```text
+Shared public URL or QR
+          |
+          v
+General RSVP form
+          |
+          | POST /api/public/registrations
+          v
+Spring Boot transaction
+          |
+          +--> Invitation
+          `--> RsvpResponse
+                    |
+                    v
+                 Database
+```
+
+The guest does not provide an access code. The backend generates one internally to preserve the existing data model.
 
 For automated tests:
 
@@ -373,9 +395,13 @@ The application should start on:
 http://localhost:8080
 ```
 
+This root URL must display the general RSVP form directly. It must not require a query parameter such as `?code=...`.
+
 ---
 
-# 10. Verify the health endpoint
+# 10. Verify the local public flow
+
+## Verify the health endpoint
 
 Open:
 
@@ -406,6 +432,96 @@ From Git Bash:
 curl http://localhost:8080/api/public/health
 ```
 
+## Open the general public form
+
+Open:
+
+```text
+http://localhost:8080/
+```
+
+The form must be available without:
+
+```text
+AccessCode
+Invitation ID
+Password
+?code=...
+```
+
+The same root URL can later be placed in the common QR code.
+
+## Submit a fictitious registration from PowerShell
+
+Keep Spring Boot running and open a second PowerShell terminal in the project directory.
+
+Create a JSON request using only fictitious data:
+
+```powershell
+$RegistrationBody = @{
+    guestName = "Ana GarcÃ­a"
+    contact = "ana@example.com"
+    attendanceConfirmed = $true
+    attendeeCount = 2
+    intolerances = "Lactosa"
+    additionalComment = "Datos ficticios de prueba"
+} | ConvertTo-Json
+```
+
+Send the request:
+
+```powershell
+$RegistrationResult = Invoke-RestMethod `
+    -Method Post `
+    -Uri "http://localhost:8080/api/public/registrations" `
+    -ContentType "application/json" `
+    -Body $RegistrationBody
+
+$RegistrationResult
+```
+
+Expected result:
+
+```text
+success    True
+message    Tu respuesta se ha guardado correctamente.
+updatedAt  <UTC_DATE_AND_TIME>
+```
+
+The endpoint returns:
+
+```text
+201 Created
+```
+
+It does not return the generated access code or a database identifier.
+
+## Submit the same test from Git Bash
+
+```bash
+curl --request POST \
+    --header "Content-Type: application/json" \
+    --data '{"guestName":"Ana GarcÃ­a","contact":"ana@example.com","attendanceConfirmed":true,"attendeeCount":2,"intolerances":"Lactosa","additionalComment":"Datos ficticios de prueba"}' \
+    http://localhost:8080/api/public/registrations
+```
+
+Use either the PowerShell example or the Git Bash example. Running both creates two independent registrations by design.
+
+To test a declined RSVP, use:
+
+```json
+{
+  "guestName": "Carlos LÃ³pez",
+  "contact": "600123123",
+  "attendanceConfirmed": false,
+  "attendeeCount": 0,
+  "intolerances": "",
+  "additionalComment": "Datos ficticios de prueba"
+}
+```
+
+For confirmed attendance, `attendeeCount` must be between 1 and 20. For declined attendance, it must be exactly 0.
+
 ---
 
 # 11. Access the local administration area
@@ -426,6 +542,14 @@ ADMIN_PASSWORD
 ```
 
 The administration area should not be accessible anonymously.
+
+After authentication, confirm that the fictitious registration created in the previous section appears in the dashboard and response list.
+
+Also verify that it is included when downloading:
+
+```text
+GET /api/admin/responses.csv
+```
 
 ---
 
@@ -457,6 +581,33 @@ Use:
 The H2 console is enabled only for local development.
 
 It is disabled in production.
+
+After submitting the public form, the following read-only query can confirm that the two records are associated:
+
+```sql
+SELECT
+    i.Id AS InvitationId,
+    i.DisplayName,
+    i.MaxGuests,
+    r.Id AS ResponseId,
+    r.GuestName,
+    r.AttendanceConfirmed,
+    r.AttendeeCount
+FROM Invitations i
+INNER JOIN RsvpResponses r
+    ON r.InvitationId = i.Id
+ORDER BY i.Id DESC;
+```
+
+For a general public registration, the latest result should have:
+
+```text
+Invitation.DisplayName = submitted guestName
+Invitation.MaxGuests = 20
+One associated RsvpResponse
+```
+
+The access code is generated internally. Do not copy it into documentation, screenshots, or public test data.
 
 ---
 
@@ -602,6 +753,7 @@ docker run \
 Open:
 
 ```text
+http://localhost:8080/
 http://localhost:8080/api/public/health
 ```
 
@@ -610,6 +762,8 @@ And:
 ```text
 http://localhost:8080/admin/
 ```
+
+The root URL must show the general form without an access code. Repeat the registration test from section 10 if the containerized application flow also needs to be verified.
 
 Stop the container with:
 
@@ -871,6 +1025,8 @@ The production configuration uses:
 ddl-auto=validate
 ```
 
+The general public registration reuses the existing `Invitations` and `RsvpResponses` tables. Phase 20 does not require a schema migration.
+
 ---
 
 # 26. Verify the production tables
@@ -1044,6 +1200,7 @@ docker run `
 Verify:
 
 ```text
+http://localhost:8080/
 http://localhost:8080/api/public/health
 ```
 
@@ -1052,6 +1209,8 @@ and:
 ```text
 http://localhost:8080/admin/
 ```
+
+The root URL must display the general form. A fictitious `POST /api/public/registrations` can be submitted using the procedure from section 10 to confirm that the production profile writes both related records to Azure SQL.
 
 This confirms that the same Docker image can run against Azure SQL when the production configuration is supplied at runtime.
 
@@ -1320,6 +1479,8 @@ Print only the public URL:
 $BaseUrl
 ```
 
+This is the general URL intended for the shared QR code. No access-code query parameter is required.
+
 ---
 
 # 39. Verify the Azure deployment
@@ -1345,6 +1506,36 @@ Open the public application:
 Start-Process $BaseUrl
 ```
 
+Confirm that the general form loads directly and does not request an access code.
+
+Submit one fictitious registration:
+
+```powershell
+$RegistrationBody = @{
+    guestName = "Invitado DemostraciÃ³n"
+    contact = "demo@example.com"
+    attendanceConfirmed = $true
+    attendeeCount = 2
+    intolerances = ""
+    additionalComment = "ComprobaciÃ³n ficticia de Azure"
+} | ConvertTo-Json
+
+$RegistrationResult = Invoke-RestMethod `
+    -Method Post `
+    -Uri "$BaseUrl/api/public/registrations" `
+    -ContentType "application/json" `
+    -Body $RegistrationBody
+
+$RegistrationResult
+```
+
+Expected confirmation:
+
+```text
+success = True
+message = Tu respuesta se ha guardado correctamente.
+```
+
 Open administration:
 
 ```powershell
@@ -1352,6 +1543,8 @@ Start-Process "$BaseUrl/admin/"
 ```
 
 The administration page must require authentication.
+
+After authentication, verify that the fictitious Azure registration appears in the response list, dashboard totals, and CSV export.
 
 ---
 
@@ -1896,13 +2089,14 @@ GitHub Actions completed successfully
 Container App revision is healthy
 Configured image matches expected commit
 /api/public/health returns HTTP 200
-Public form loads
+Public form loads without an AccessCode
+POST /api/public/registrations returns HTTP 201
+One Invitation and one associated RsvpResponse are created
 Administrator login works
-Dashboard loads
+New registration appears in the dashboard
 Azure SQL data can be read
-RSVP can be created
-RSVP can be updated
-CSV can be exported
+New registration is included in the CSV export
+Compatibility access-code endpoints remain available if required
 ```
 
 This validates the complete application rather than only the infrastructure.
@@ -2286,7 +2480,12 @@ Local development:
 [ ] Local profile is active.
 [ ] H2 works.
 [ ] Health endpoint works.
+[ ] General form loads without an access code.
+[ ] POST /api/public/registrations succeeds.
+[ ] One Invitation and its RsvpResponse are created.
 [ ] Administration login works.
+[ ] New registration appears in administration.
+[ ] New registration is included in CSV export.
 ```
 
 Docker:
@@ -2297,6 +2496,7 @@ Docker:
 [ ] Docker image built.
 [ ] Container starts.
 [ ] Health endpoint works from the container.
+[ ] General public form works from the container.
 [ ] No secrets exist inside the Dockerfile.
 ```
 
@@ -2313,6 +2513,7 @@ Azure SQL:
 [ ] VIEW DEFINITION granted.
 [ ] JDBC connection works.
 [ ] Hibernate validates the schema.
+[ ] No Phase 20 schema migration is required.
 ```
 
 Azure Container deployment:
@@ -2329,7 +2530,10 @@ Azure Container deployment:
 [ ] Minimum replicas is 0.
 [ ] Maximum replicas is 1.
 [ ] Health endpoint works over HTTPS.
+[ ] General form loads from the shared HTTPS URL.
+[ ] Public registration persists in Azure SQL.
 [ ] Administration login works.
+[ ] New registration appears in the dashboard and CSV.
 ```
 
 CI/CD:

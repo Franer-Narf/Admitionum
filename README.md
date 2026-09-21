@@ -2,7 +2,9 @@
 
 Admitionum is a full-stack wedding RSVP management application built with Java and Spring Boot.
 
-Guests can access an individual invitation, confirm or decline attendance, specify the number of attendees, provide contact information, report food intolerances, and add an optional comment.
+Guests can access a shared public URL, confirm or decline attendance, specify the number of attendees, provide contact information, report food intolerances, and add an optional comment.
+
+Each public submission atomically creates an internal `Invitation` and its associated `RsvpResponse`. Guests do not need to enter an access code, identifier, or password.
 
 Administrators have access to a protected dashboard where they can review RSVP information, filter responses, view attendance statistics, and export the data as CSV.
 
@@ -14,15 +16,16 @@ The application is containerized with Docker, deployed to Microsoft Azure, and a
 
 ### Guest area
 
-- Individual invitation access codes.
-- Retrieve an existing invitation.
+- Shared public registration URL suitable for a common QR code.
+- No guest access code, identifier, or login required.
 - Confirm or decline attendance.
-- Specify the number of attendees.
+- Specify up to 20 attendees.
 - Flexible contact field for phone numbers or email addresses.
 - Optional food intolerance information.
 - Optional additional comments.
-- Update an existing RSVP using the same invitation.
-- Backend validation of invitation status and maximum attendee count.
+- Backend validation of all submitted information.
+- Atomic creation of an internal invitation and its RSVP response.
+- Compatibility endpoints for existing access-code-based invitations.
 
 ### Administration area
 
@@ -137,29 +140,56 @@ More information is available in [Architecture](docs/architecture.md).
 
 ## RSVP flow
 
-A guest receives an invitation URL containing an individual access code.
+A guest opens the shared public URL directly:
 
-The browser uses that code to retrieve the invitation:
-
-```http
-GET /api/public/invitations/{code}
+```text
+https://example.com/
 ```
 
-The API verifies that the invitation:
+The same URL can be included in a common QR code used for all physical invitations.
 
-- Exists.
-- Is active.
-- Has not expired.
-
-The guest then submits the RSVP:
+The guest submits the form through:
 
 ```http
-PUT /api/public/invitations/{code}/response
+POST /api/public/registrations
 ```
 
-If the invitation already has an RSVP, the existing response is updated instead of creating a duplicate.
+The backend validates the request and executes one transaction:
 
-Each invitation can therefore have zero or one RSVP response.
+```text
+Public form
+    |
+    v
+POST /api/public/registrations
+    |
+    v
+InvitationService
+    |
+    +--> Create Invitation
+    |
+    `--> Create RsvpResponse
+             |
+             v
+          Database
+```
+
+The internal invitation uses:
+
+```text
+Random AccessCode
+DisplayName = submitted guest name
+MaxGuests = 20
+IsActive = true
+ExpiresAt = null
+```
+
+The access code is not entered by the guest and is not returned by the registration endpoint.
+
+If either database operation fails, the complete transaction is rolled back.
+
+The previous access-code endpoints remain available for compatibility, but they are no longer used by the main public form.
+
+Each invitation continues to have zero or one RSVP response:
 
 ```text
 Invitation 1 -------- 0..1 RsvpResponse
@@ -180,7 +210,7 @@ The current RSVP form contains:
 | Intolerances | Optional food intolerance information |
 | Additional comment | Optional additional information |
 
-If attendance is confirmed, the attendee count must be between `1` and the maximum number configured for the invitation.
+For a general public registration, a confirmed attendee count must be between `1` and the general maximum of `20`.
 
 If attendance is declined, the attendee count must be `0`.
 
@@ -195,12 +225,18 @@ Main public endpoints:
 ```text
 GET  /api/public/health
 
+POST /api/public/registrations
+
 GET  /api/public/invitations/{code}
 
 PUT  /api/public/invitations/{code}/response
 ```
 
-The public API never exposes the complete invitation list or administration data.
+`POST /api/public/registrations` is the endpoint used by the main public form.
+
+The access-code endpoints are retained for compatibility with the earlier invitation workflow.
+
+The public API does not expose the complete invitation list, administration data, or the generated internal access code.
 
 See [API documentation](docs/api.md) for the complete contracts.
 
@@ -234,7 +270,8 @@ The project applies several security measures:
 - GitHub Actions authenticates against Azure using OIDC.
 - No Azure client secret is required by the deployment workflow.
 - The frontend never receives database credentials.
-- Public endpoints only expose data required by an individual invitation.
+- The general registration endpoint does not expose internal database identifiers or generated access codes.
+- Public endpoints never expose the complete invitation or RSVP database.
 - Backend validation is authoritative.
 - Production database traffic uses an encrypted Azure SQL connection.
 - Secrets and local environment files are excluded from Git.

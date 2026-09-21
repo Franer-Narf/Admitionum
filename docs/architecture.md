@@ -68,7 +68,7 @@ Admitionum contains two user-facing areas.
              v                               v
        Public area                    Administration area
              |                               |
-     Invitation form                  Protected dashboard
+    General RSVP form                 Protected dashboard
              |                               |
       /api/public/**                    /api/admin/**
              |                               |
@@ -118,6 +118,7 @@ For example:
 https://example.com/
 https://example.com/admin/
 https://example.com/api/public/health
+https://example.com/api/public/registrations
 https://example.com/api/public/invitations/{code}
 https://example.com/api/admin/dashboard
 ```
@@ -162,21 +163,22 @@ Important controllers include:
 
 ```text
 HealthController
+PublicRegistrationController
 PublicInvitationController
 AdminController
 ```
 
 A controller should not contain database access logic.
 
-For example:
+For example, the main public registration follows this path:
 
 ```text
-PUT /api/public/invitations/{code}/response
-                |
-                v
-PublicInvitationController
-                |
-                v
+POST /api/public/registrations
+              |
+              v
+PublicRegistrationController
+              |
+              v
 InvitationService
 ```
 
@@ -204,23 +206,24 @@ CsvExportService
 
 ### InvitationService
 
-`InvitationService` handles the public invitation workflow.
+`InvitationService` handles both the main public registration workflow and the compatibility workflow based on invitation codes.
 
 Its responsibilities include:
 
 ```text
-Find an invitation by access code
-Validate that the invitation exists
-Validate that the invitation is active
-Validate that the invitation has not expired
-Retrieve an existing RSVP
+Register a response without requiring a guest access code
+Generate a random internal access code
+Create an Invitation and its RsvpResponse in one transaction
 Validate the attendee count
-Create a new RSVP
-Update an existing RSVP
 Normalize user input
+Find an invitation by access code for compatibility
+Validate that a compatibility invitation exists, is active and has not expired
+Retrieve, create or update an RSVP through the compatibility endpoints
 ```
 
-The public controller therefore does not need to know how these rules are implemented.
+The controllers therefore do not need to know how these rules are implemented.
+
+The new registration method is transactional. If either entity cannot be saved, Spring rolls back the complete operation so that an orphan `Invitation` is not retained.
 
 ### AdminService
 
@@ -321,24 +324,28 @@ Their relationship is:
 Invitation 1 -------- 0..1 RsvpResponse
 ```
 
-An invitation can therefore exist without having received a response yet.
+The main general registration creates one `Invitation` and one associated `RsvpResponse` in the same transaction.
 
-Once the guest submits the form, the invitation can have one RSVP response.
+An invitation can still exist without a response because the compatibility workflow remains available and the database relationship continues to allow zero or one response.
 
-A second submission updates the existing response rather than creating another response.
+Each valid submission to the general registration endpoint creates an independent pair. The application does not attempt to identify or merge people by name or contact details.
+
+Through the compatibility endpoint, a later submission for the same access code updates the existing response rather than creating a second response for that invitation.
 
 ---
 
 ## 9. Invitation entity
 
-`Invitation` represents an invitation issued by the administrator.
+`Invitation` represents the persistent invitation associated with an RSVP.
+
+In the main public flow it is created automatically by the backend. It can also represent a previously created invitation used through the compatibility API.
 
 Important information includes:
 
 | Field | Purpose |
 |---|---|
 | `id` | Internal database identifier |
-| `accessCode` | Code used in the guest invitation URL |
+| `accessCode` | Unique random internal code and compatibility identifier |
 | `displayName` | Human-readable invitation name |
 | `maxGuests` | Maximum allowed attendees |
 | `isActive` | Whether the invitation can be used |
@@ -346,7 +353,9 @@ Important information includes:
 | `createdAt` | Creation timestamp |
 | `updatedAt` | Last modification timestamp |
 
-The access code is used by the public API to identify the invitation.
+For a general registration, the backend generates the access code. The guest does not enter it, choose it, or receive it in the registration response.
+
+The existing access-code API can still use it to identify a compatibility invitation.
 
 The internal numeric identifier is not required by the public frontend.
 
@@ -457,9 +466,17 @@ Attendee count is required
 Maximum text lengths
 ```
 
-The service then validates rules that depend on the invitation itself.
+The service then validates the relationship between the attendance decision and the attendee count.
 
-For a confirmed invitation:
+For a confirmed general registration:
+
+```text
+1 <= attendeeCount <= 20
+```
+
+The automatically created invitation uses `maxGuests = 20`, which allows the compatibility model and existing database constraints to be reused without a schema change.
+
+For a confirmed response submitted through the compatibility endpoint:
 
 ```text
 1 <= attendeeCount <= invitation.maxGuests
@@ -473,32 +490,65 @@ attendeeCount = 0
 
 ---
 
-## 13. Public invitation flow
+## 13. General public registration flow
 
-A guest accesses the application using an invitation code.
+All guests can access the same public URL directly or by scanning a common QR code.
 
-Conceptually:
+The main flow is:
 
 ```text
-Invitation link
-      |
-      v
-Browser
-      |
-      | GET /api/public/invitations/{code}
-      v
-PublicInvitationController
-      |
-      v
+Shared URL or QR
+       |
+       v
+GET /
+       |
+       v
+General public form
+       |
+       | POST /api/public/registrations
+       | JSON validated with @Valid SaveRsvpRequest
+       v
+PublicRegistrationController
+       |
+       v
 InvitationService
-      |
-      +--> InvitationRepository
-      |
-      +--> RsvpResponseRepository
-      |
-      v
-Database
+       |
+       | @Transactional
+       +--> Generate a random unique access code
+       +--> Create Invitation
+       `--> Create associated RsvpResponse
+                         |
+                         v
+                      Database
 ```
+
+The guest provides only the RSVP form data. No access code, database identifier, password, or other technical value is required.
+
+The automatically created invitation uses:
+
+```text
+displayName = submitted guest name
+maxGuests = 20
+isActive = true
+expiresAt = null
+```
+
+The generated access code is stored internally to preserve the existing model and is protected by the database uniqueness constraint. It is not returned by the registration endpoint.
+
+The invitation and response are saved within one transaction. If creating or saving either entity fails, the complete operation is rolled back.
+
+---
+
+## 14. Invitation-code compatibility flow
+
+The earlier endpoints remain available so the existing architecture is not removed unnecessarily:
+
+```text
+GET /api/public/invitations/{code}
+PUT /api/public/invitations/{code}/response
+```
+
+For these endpoints, `PublicInvitationController` delegates to `InvitationService`.
 
 The service verifies that the invitation:
 
@@ -508,63 +558,11 @@ Is active
 Has not expired
 ```
 
-If an existing RSVP is found, it is included in the response so the form can be populated with the previously submitted values.
+The `GET` response can include an existing RSVP so a compatible client can populate previously submitted values.
 
----
+The `PUT` operation creates a response when none exists or updates the single response already associated with that invitation. It also enforces the invitation-specific `maxGuests` value.
 
-## 14. Saving an RSVP
-
-When the guest submits the form:
-
-```text
-Browser
-   |
-   | PUT /api/public/invitations/{code}/response
-   |
-   | JSON
-   v
-PublicInvitationController
-   |
-   | @Valid SaveRsvpRequest
-   v
-InvitationService
-   |
-   +--> Validate invitation
-   |
-   +--> Validate attendee count
-   |
-   +--> Search existing response
-   |
-   +--> Create or update response
-   |
-   v
-RsvpResponseRepository
-   |
-   v
-Database
-```
-
-The operation is transactional.
-
-If a response already exists for the invitation:
-
-```text
-Existing row
-    |
-    v
-Update values
-```
-
-If no response exists:
-
-```text
-No row
-   |
-   v
-Create RsvpResponse
-```
-
-This implements the one-response-per-invitation rule.
+These endpoints are not used by the main form at `/`, which submits new registrations without an access code.
 
 ---
 
@@ -1088,22 +1086,24 @@ The public client only interacts with the REST API.
 
 ## 28. Public and private data
 
-The public API is designed around a single invitation code.
+The main public API accepts one anonymous RSVP registration at a time.
 
-It does not expose the complete RSVP database.
+It does not expose the complete RSVP database, internal database identifiers, or the access code generated for a new registration.
 
-The public flow can retrieve information associated with one invitation and submit its response.
+The compatibility API can retrieve and update only the invitation identified by a known access code.
 
 Administrative information is accessed through authenticated endpoints.
 
 ```text
 Public user
     |
-    v
-/api/public/**
+    +--> POST /api/public/registrations
+    |         |
+    |         `--> Submit one new RSVP
     |
-    v
-Individual invitation information
+    `--> Compatibility endpoints with known code
+              |
+              `--> Retrieve or update one invitation
 ```
 
 Compared with:
@@ -1220,6 +1220,7 @@ nc.admitionum
 |
 |-- controller
 |   |-- HealthController
+|   |-- PublicRegistrationController
 |   |-- PublicInvitationController
 |   `-- AdminController
 |
@@ -1281,7 +1282,7 @@ static/
     `-- admin-app.js
 ```
 
-`public-app.js` handles the guest interaction with the public API.
+`public-app.js` submits the general guest form to `POST /api/public/registrations` and presents validation or confirmation messages.
 
 `admin-app.js` handles dashboard data, filters, and administration presentation.
 
@@ -1306,11 +1307,18 @@ Azure Functions
 Azure Spring Apps
 A separate frontend service
 A separate authentication service
+Guest accounts
+Email or SMS verification
+Advanced identity or duplicate detection
+CAPTCHA
+Complex application-level rate limiting
 ```
 
 These are not missing accidentally.
 
 They were excluded because the application requirements can be satisfied with a simpler architecture.
+
+Each valid general-form submission is therefore treated as an independent registration. Two people may share the same name, so a name alone is not used to reject a submission as a duplicate.
 
 The goal is to demonstrate a complete and understandable application lifecycle rather than maximize the number of technologies used.
 

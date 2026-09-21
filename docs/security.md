@@ -9,7 +9,8 @@ It covers:
 - Public and administration access.
 - Spring Security.
 - Administrator credentials.
-- Invitation access codes.
+- Anonymous public registration.
+- Internal and compatibility invitation access codes.
 - Database credentials.
 - Azure SQL access.
 - Browser data handling.
@@ -65,12 +66,16 @@ The following resources are publicly accessible:
 /error
 ```
 
-The public API provides only the operations required to complete an invitation.
+The public API provides only the operations required to submit an RSVP, use the retained compatibility flow, and verify application health.
 
 Main endpoints:
 
 ```text
 GET /api/public/health
+
+POST /api/public/registrations
+
+Compatibility:
 
 GET /api/public/invitations/{code}
 
@@ -84,19 +89,24 @@ For example, the application does not expose:
 ```text
 GET /api/public/invitations
 GET /api/public/responses
+GET /api/public/registrations
 ```
 
-The intended public data boundary is:
+The main public data boundary is:
 
 ```text
-Invitation code
-      |
-      v
-One invitation
-      |
-      v
-One RSVP
+One anonymous POST request
+          |
+          v
+Create one Invitation
+          |
+          v
+Create one associated RSVP
 ```
+
+The generated invitation access code and internal database identifiers are not returned to the guest.
+
+The compatibility endpoints can retrieve or update only the invitation identified by a known code. They are no longer used by the main public form.
 
 ---
 
@@ -294,7 +304,7 @@ The public API is explicitly excluded:
 
 The reason is that the public RSVP API does not rely on the administrator HTTP session for authentication.
 
-Its access model is based on the invitation code.
+The main registration endpoint is intentionally anonymous, and the retained invitation-code endpoints are also public compatibility operations.
 
 Administrative routes are not globally excluded from CSRF protection.
 
@@ -304,47 +314,55 @@ If future versions introduce administrative write operations, their CSRF behavio
 
 ---
 
-# 11. Invitation access model
+# 11. General public registration model
 
 Guests do not authenticate with usernames or passwords.
 
-An invitation is accessed through its individual access code.
-
-Example:
+All guests can open the same public URL:
 
 ```text
-/?code=<INVITATION_CODE>
+https://<DOMAIN>/
 ```
 
-The frontend then requests:
+The public form submits:
 
 ```text
-GET /api/public/invitations/{code}
+POST /api/public/registrations
 ```
 
-The backend validates that the invitation:
+The guest supplies only the RSVP data. The guest does not provide an access code, database identifier, password, or other technical value.
+
+The backend validates the request and creates:
 
 ```text
-Exists
-Is active
-Has not expired
+Invitation
+    |
+    v
+RsvpResponse
 ```
 
-The same code is used when saving the RSVP:
+Both entities are created in one transaction. If either persistence operation fails, the complete operation is rolled back so that an orphan `Invitation` is not retained.
 
-```text
-PUT /api/public/invitations/{code}/response
-```
+Every valid submission is treated as an independent registration. Admitionum does not use only the guest name to block duplicates because different people can share the same name.
 
 ---
 
-# 12. Invitation codes are capability-like secrets
+# 12. Internal and compatibility access codes
 
-An invitation code grants access to the RSVP associated with that invitation.
+The main public registration generates a unique random access code internally for each new `Invitation`.
 
-Anyone who possesses a valid code can potentially access and update that invitation response.
+This preserves the existing entity model and database relationship, but the code is not selected, entered, or returned to the guest using the general form.
 
-For that reason, production invitation codes should be:
+The earlier access-code endpoints remain available for compatibility:
+
+```text
+GET /api/public/invitations/{code}
+PUT /api/public/invitations/{code}/response
+```
+
+For that compatibility flow, the code remains capability-like: anyone who possesses a valid code can potentially access and update its associated RSVP.
+
+Generated and compatibility codes should therefore be:
 
 ```text
 Random
@@ -353,7 +371,7 @@ Unique
 Difficult to predict
 ```
 
-They should not contain obvious patterns such as:
+They must not use predictable counters or obvious patterns such as:
 
 ```text
 family-name-1
@@ -374,11 +392,13 @@ Public demo data
 
 ---
 
-# 13. Current invitation-code limitation
+# 13. Current compatibility-code limitation
 
 The current application stores the invitation access code as a database value and searches for it directly.
 
 The current implementation does not hash invitation codes before persistence.
+
+The general registration does not reveal its generated code, which reduces its exposure in the main guest journey. However, the code remains stored in the database and the compatibility API still accepts known codes.
 
 This is acceptable for the current focused project architecture, but it is an important limitation to document.
 
@@ -476,15 +496,18 @@ Authoritative rules
 The backend verifies rules such as:
 
 ```text
-Invitation exists
-Invitation is active
-Invitation has not expired
 Guest name is valid
 Contact is valid
 Text lengths are valid
-Attendee count is valid
-Attendee count does not exceed invitation.maxGuests
+Confirmed attendance requires 1 to 20 attendees
+Declined attendance requires zero attendees
+Compatibility invitation exists
+Compatibility invitation is active
+Compatibility invitation has not expired
+Compatibility attendee count does not exceed invitation.maxGuests
 ```
+
+For a general registration, the backend also generates the internal code and creates the `Invitation` and `RsvpResponse` atomically.
 
 ---
 
@@ -562,7 +585,7 @@ This reduces the risk of stored HTML or JavaScript being interpreted by the admi
 
 The public JavaScript also uses text-based DOM properties when displaying API information and messages.
 
-For example, invitation names and error messages are assigned using:
+For example, confirmation and error messages are assigned using:
 
 ```text
 textContent
@@ -1297,9 +1320,9 @@ A larger production system would require a stronger identity lifecycle.
 
 ---
 
-# 49. Current public-code limitation
+# 49. Current anonymous-registration limitation
 
-The invitation code is effectively the guest's authorization mechanism.
+The main public registration endpoint is intentionally anonymous so every guest can use the same QR code or URL.
 
 Admitionum currently does not provide:
 
@@ -1310,10 +1333,15 @@ One-time codes
 Secondary verification
 Token hashing
 Rate limiting
-Lockout after failed code attempts
+Complex duplicate detection
+Lockout after failed compatibility-code attempts
 ```
 
-The main protection is therefore the unpredictability and confidentiality of each invitation code.
+Each valid general-form submission can therefore create a separate `Invitation` and `RsvpResponse`.
+
+The application does not treat a matching name as proof that two submissions belong to the same person.
+
+For the retained compatibility flow, the protection continues to depend on the unpredictability and confidentiality of each invitation code.
 
 Real codes should consequently be generated randomly and should never be easily guessable.
 
@@ -1348,12 +1376,15 @@ The public RSVP form does not use a CAPTCHA.
 The application therefore relies on:
 
 ```text
-Invitation-code secrecy
 Backend validation
+Transactional persistence
+Restricted public response data
 Small application scope
 ```
 
-rather than bot verification.
+These controls do not provide bot verification, but they preserve validation and data boundaries within the current project scope.
+
+Invitation-code secrecy additionally applies to the retained compatibility endpoints.
 
 CAPTCHA was deliberately excluded from the MVP.
 
@@ -1554,6 +1585,8 @@ Session-based administrator authentication
 ROLE_ADMIN authorization
 Default-deny route policy
 Public/admin API separation
+Anonymous general registration with restricted responses
+Random internal invitation access codes
 DTO-based API boundaries
 Backend validation
 SQL constraints
