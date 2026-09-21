@@ -49,8 +49,9 @@
                 <p
                     id="invitation-name"
                     class="invitation-name"
-                    aria-live="polite"
-                ></p>
+                >
+                    Registro general de invitados
+                </p>
 
             </header>
 
@@ -66,6 +67,8 @@
                 <p>
                     Completa los siguientes datos para
                     confirmar tu asistencia.
+                    No necesitas introducir ningún código
+                    de invitación.
                     En el campo de contacto puedes indicar
                     un número de teléfono o una dirección
                     de correo electrónico.
@@ -172,6 +175,7 @@
                         name="attendeeCount"
                         type="number"
                         min="1"
+                        max="20"
                         step="1"
                         inputmode="numeric"
                         aria-describedby="attendee-count-help"
@@ -179,8 +183,8 @@
                     >
 
                     <small id="attendee-count-help">
-                        El número máximo depende de tu
-                        invitación.
+                        Puedes confirmar un máximo de
+                        20 asistentes.
                     </small>
 
                 </div>
