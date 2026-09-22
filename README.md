@@ -655,4 +655,12 @@ The project demonstrates experience with:
 
 ## License
 
-A project license will be added before the final portfolio release.
+This project is available under the Creative Commons Attribution-NonCommercial 4.0 International license.
+
+You may share and adapt the project provided you give appropriate attribution, but commercial use is not permitted.
+
+---
+
+## Donations
+
+To support the developer: https://buymeacoffee.com/franer
