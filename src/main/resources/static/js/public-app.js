@@ -1,9 +1,7 @@
 "use strict";
 
-const rsvpForm = document.querySelector("#rsvp-form");
-
-const invitationName =
-    document.querySelector("#invitation-name");
+const rsvpForm =
+    document.querySelector("#rsvp-form");
 
 const guestNameInput =
     document.querySelector("#guest-name");
@@ -19,11 +17,6 @@ const attendanceRadios =
 const attendeeCountInput =
     document.querySelector("#attendee-count");
 
-const attendeeCountHelp =
-    document.querySelector(
-        "#attendee-count-help"
-    );
-
 const intolerancesInput =
     document.querySelector("#intolerances");
 
@@ -37,28 +30,6 @@ const submitButton =
 
 const formMessage =
     document.querySelector("#form-message");
-
-
-let invitationCode = "";
-let maxGuests = 0;
-
-
-function getInvitationCode() {
-
-    const params =
-        new URLSearchParams(
-            window.location.search
-        );
-
-    const code =
-        params.get("code");
-
-    if (code === null) {
-        return "";
-    }
-
-    return code.trim();
-}
 
 
 function setFormDisabled(disabled) {
@@ -79,54 +50,6 @@ function showMessage(message) {
     formMessage.textContent = message;
 }
 
-function fillExistingResponse(
-        existingResponse) {
-
-    if (existingResponse === null) {
-        return;
-    }
-
-    guestNameInput.value =
-        existingResponse.guestName ?? "";
-
-    contactInput.value =
-        existingResponse.contact ?? "";
-
-    intolerancesInput.value =
-        existingResponse.intolerances ?? "";
-
-    additionalCommentInput.value =
-        existingResponse.additionalComment ?? "";
-
-
-    if (
-        existingResponse
-            .attendanceConfirmed === true
-    ) {
-
-        document
-            .querySelector("#attendance-yes")
-            .checked = true;
-
-        attendeeCountInput.value =
-            String(
-                existingResponse
-                    .attendeeCount ?? 1
-            );
-
-    } else if (
-        existingResponse
-            .attendanceConfirmed === false
-    ) {
-
-        document
-            .querySelector("#attendance-no")
-            .checked = true;
-
-        attendeeCountInput.value = "0";
-    }
-}
-
 
 function updateAttendeeCountState() {
 
@@ -138,7 +61,6 @@ function updateAttendeeCountState() {
     if (selectedAttendance === null) {
 
         attendeeCountInput.value = "";
-
         attendeeCountInput.disabled = true;
 
         return;
@@ -146,7 +68,6 @@ function updateAttendeeCountState() {
 
     const isAttending =
         selectedAttendance.value === "true";
-
 
     if (isAttending) {
 
@@ -163,9 +84,7 @@ function updateAttendeeCountState() {
         return;
     }
 
-
     attendeeCountInput.value = "0";
-
     attendeeCountInput.disabled = true;
 }
 
@@ -183,9 +102,7 @@ function getApiErrorMessage(
         return fallbackMessage;
     }
 
-
     const messages = [];
-
 
     if (data.error.message) {
 
@@ -193,7 +110,6 @@ function getApiErrorMessage(
             data.error.message
         );
     }
-
 
     if (data.error.fields) {
 
@@ -210,155 +126,12 @@ function getApiErrorMessage(
             });
     }
 
-
     if (messages.length === 0) {
 
         return fallbackMessage;
     }
 
-
     return messages.join(" ");
-}
-
-
-async function loadInvitation() {
-
-    invitationCode =
-        getInvitationCode();
-
-    setFormDisabled(true);
-
-    invitationName.textContent = "";
-
-
-    if (invitationCode === "") {
-
-        showMessage(
-            "No se ha indicado un código "
-                + "de invitación válido."
-        );
-
-        return;
-    }
-
-
-    showMessage(
-        "Cargando invitación..."
-    );
-
-
-    try {
-
-        const response =
-            await fetch(
-                "/api/public/invitations/"
-                    + encodeURIComponent(
-                        invitationCode
-                    ),
-                {
-                    method: "GET",
-
-                    headers: {
-                        Accept:
-                            "application/json"
-                    }
-                }
-            );
-
-
-        const data =
-            await response.json();
-
-
-        if (!response.ok) {
-
-            showMessage(
-                getApiErrorMessage(
-                    data,
-                    "No se ha podido cargar "
-                        + "la invitación."
-                )
-            );
-
-            return;
-        }
-
-
-       maxGuests =
-        Number(data.maxGuests);
-
-
-    if (
-        !Number.isInteger(maxGuests)
-        || maxGuests < 1
-        || maxGuests > 20
-    ) {
-
-            showMessage(
-                "La invitación contiene "
-                    + "un número máximo de "
-                    + "asistentes no válido."
-            );
-
-            return;
-        }
-
-
-        invitationName.textContent =
-            "Invitación para "
-                + data.displayName;
-
-
-        attendeeCountInput.max =
-        String(maxGuests);
-
-    attendeeCountHelp.textContent =
-        "Puedes confirmar hasta "
-            + maxGuests
-            + " asistentes.";
-
-
-        fillExistingResponse(
-            data.existingResponse
-        );
-
-
-        setFormDisabled(false);
-
-        updateAttendeeCountState();
-
-
-        if (
-            data.existingResponse !== null
-        ) {
-
-            showMessage(
-                "Hemos recuperado tu "
-                    + "respuesta anterior. "
-                    + "Puedes modificarla "
-                    + "y volver a enviarla."
-            );
-
-        } else {
-
-            showMessage("");
-        }
-
-    } catch (error) {
-
-        console.error(
-            "Error al cargar "
-                + "la invitación:",
-            error
-        );
-
-        showMessage(
-            "No se ha podido conectar "
-                + "con el servidor. "
-                + "Inténtalo de nuevo "
-                + "más tarde."
-        );
-    }
 }
 
 
@@ -369,10 +142,8 @@ function buildRequestBody() {
             'input[name="attendanceConfirmed"]:checked'
         );
 
-
     const attendanceConfirmed =
         selectedAttendance.value === "true";
-
 
     return {
 
@@ -415,32 +186,18 @@ async function handleSubmit(event) {
 
     showMessage("");
 
-
-    if (invitationCode === "") {
-
-        showMessage(
-            "No se puede enviar la "
-                + "respuesta sin un código "
-                + "de invitación válido."
-        );
-
-        return;
-    }
-
-
     if (!rsvpForm.reportValidity()) {
 
         return;
     }
 
-
     const requestBody =
         buildRequestBody();
-
 
     const originalButtonText =
         submitButton.textContent;
 
+    let registrationSucceeded = false;
 
     setFormDisabled(true);
 
@@ -451,18 +208,13 @@ async function handleSubmit(event) {
         "Enviando respuesta..."
     );
 
-
     try {
 
         const response =
             await fetch(
-                "/api/public/invitations/"
-                    + encodeURIComponent(
-                        invitationCode
-                    )
-                    + "/response",
+                "/api/public/registrations",
                 {
-                    method: "PUT",
+                    method: "POST",
 
                     headers: {
                         Accept:
@@ -479,10 +231,8 @@ async function handleSubmit(event) {
                 }
             );
 
-
         const data =
             await response.json();
-
 
         if (!response.ok) {
 
@@ -497,6 +247,7 @@ async function handleSubmit(event) {
             return;
         }
 
+        registrationSucceeded = true;
 
         showMessage(
             data.message
@@ -507,7 +258,7 @@ async function handleSubmit(event) {
     } catch (error) {
 
         console.error(
-            "Error al guardar "
+            "Error al registrar "
                 + "la respuesta:",
             error
         );
@@ -521,12 +272,20 @@ async function handleSubmit(event) {
 
     } finally {
 
-        submitButton.textContent =
-            originalButtonText;
+        if (registrationSucceeded) {
 
-        setFormDisabled(false);
+            submitButton.textContent =
+                "Respuesta enviada";
 
-        updateAttendeeCountState();
+        } else {
+
+            submitButton.textContent =
+                originalButtonText;
+
+            setFormDisabled(false);
+
+            updateAttendeeCountState();
+        }
     }
 }
 
@@ -546,4 +305,4 @@ rsvpForm.addEventListener(
 );
 
 
-loadInvitation();
+updateAttendeeCountState();

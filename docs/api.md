@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-Admitionum exposes a small REST API used by the public RSVP form and the protected administration dashboard.
+Admitionum exposes a small REST API used by the general public RSVP form and the protected administration dashboard.
 
 The API is divided into two areas:
 
@@ -16,6 +16,16 @@ Public endpoints can be accessed without administrator authentication.
 Administration endpoints require an authenticated Spring Security session with the `ADMIN` role.
 
 The frontend and API are served by the same Spring Boot application.
+
+The main guest endpoint is:
+
+```http
+POST /api/public/registrations
+```
+
+It accepts one RSVP and creates its `Invitation` and associated `RsvpResponse` automatically.
+
+The earlier endpoints based on an invitation access code remain available for compatibility, but the main form at `/` no longer uses them.
 
 ---
 
@@ -39,7 +49,7 @@ This documentation uses relative endpoint paths so that no production-specific h
 
 ---
 
-## 3. Content type
+## 3. Content types
 
 JSON API requests use:
 
@@ -110,218 +120,36 @@ It does not query or expose RSVP information.
 
 ---
 
-# 5. Retrieve an invitation
+## 5. Create a general public registration
 
-Retrieves the public information associated with one invitation access code.
+This is the endpoint used by the main public form.
 
-### Request
-
-```http
-GET /api/public/invitations/{code}
-```
-
-Example:
-
-```http
-GET /api/public/invitations/DEMO-FAMILY-001
-```
-
-### Authentication
-
-Not required.
-
-### Path parameter
-
-| Parameter | Type | Description |
-|---|---|---|
-| `code` | String | Individual invitation access code |
-
-The code is trimmed before it is used.
-
-An empty or invalid code is treated as an invitation that cannot be found.
-
----
-
-## 5.1. Successful response without an existing RSVP
-
-HTTP:
-
-```text
-200 OK
-```
-
-Example:
-
-```json
-{
-  "displayName": "Familia García",
-  "maxGuests": 4,
-  "expiresAt": "2027-05-01T22:00:00",
-  "existingResponse": null
-}
-```
-
-### Response fields
-
-| Field | Type | Description |
-|---|---|---|
-| `displayName` | String | Name associated with the invitation |
-| `maxGuests` | Integer | Maximum number of attendees allowed |
-| `expiresAt` | Date/time or null | Optional invitation expiration |
-| `existingResponse` | Object or null | Previously stored RSVP |
-
-The public response does not expose the internal invitation database ID.
-
-It also does not return the complete invitation list.
-
----
-
-## 5.2. Successful response with an existing RSVP
-
-Example:
-
-```json
-{
-  "displayName": "Familia García",
-  "maxGuests": 4,
-  "expiresAt": "2027-05-01T22:00:00",
-  "existingResponse": {
-    "guestName": "Ana García",
-    "contact": "ana@example.com",
-    "attendanceConfirmed": true,
-    "attendeeCount": 3,
-    "intolerances": "Una persona es intolerante a la lactosa",
-    "additionalComment": "Llegaremos el viernes"
-  }
-}
-```
-
-### Existing RSVP fields
-
-| Field | Type | Description |
-|---|---|---|
-| `guestName` | String | Guest name entered in the form |
-| `contact` | String | Phone number, email address, or other contact text |
-| `attendanceConfirmed` | Boolean | Whether attendance is confirmed |
-| `attendeeCount` | Integer | Number of attendees |
-| `intolerances` | String or null | Food intolerance information |
-| `additionalComment` | String or null | Optional additional comment |
-
-This allows the public form to restore previously submitted information.
-
----
-
-## 5.3. Invitation not found
-
-If no invitation exists for the supplied code:
-
-HTTP:
-
-```text
-404 Not Found
-```
-
-Response:
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "INVITATION_NOT_FOUND",
-    "message": "No se ha encontrado una invitación válida para el código indicado."
-  }
-}
-```
-
----
-
-## 5.4. Disabled invitation
-
-If the invitation exists but is disabled:
-
-HTTP:
-
-```text
-410 Gone
-```
-
-Response:
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "INVITATION_DISABLED",
-    "message": "La invitación está desactivada."
-  }
-}
-```
-
----
-
-## 5.5. Expired invitation
-
-If the invitation expiration date has already passed:
-
-HTTP:
-
-```text
-410 Gone
-```
-
-Response:
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "INVITATION_EXPIRED",
-    "message": "El plazo para responder a la invitación ha finalizado."
-  }
-}
-```
-
----
-
-# 6. Create or update an RSVP
-
-Stores the RSVP associated with an invitation.
-
-If no RSVP exists yet, a new response is created.
-
-If an RSVP already exists for the same invitation, the existing response is updated.
+The guest does not need an access code, invitation identifier, account, password, or any other technical value.
 
 ### Request
 
 ```http
-PUT /api/public/invitations/{code}/response
-```
-
-Example:
-
-```http
-PUT /api/public/invitations/DEMO-FAMILY-001/response
-```
-
-### Authentication
-
-Not required.
-
-### Content type
-
-```http
+POST /api/public/registrations
 Content-Type: application/json
 ```
 
+### Authentication
+
+Not required.
+
+The endpoint is included under `/api/public/**` and is therefore publicly accessible through the existing Spring Security configuration.
+
+### CSRF
+
+CSRF protection is ignored for `/api/public/**` by the current security configuration, so this JSON request does not require a CSRF token.
+
 ---
 
-## 6.1. Request body
-
-Example of a confirmed RSVP:
+### 5.1. Request body for confirmed attendance
 
 ```json
 {
-  "guestName": "Ana García",
+  "guestName": "Ana GarcÃ­a",
   "contact": "ana@example.com",
   "attendanceConfirmed": true,
   "attendeeCount": 3,
@@ -330,33 +158,35 @@ Example of a confirmed RSVP:
 }
 ```
 
-Example of a declined RSVP:
+---
+
+### 5.2. Request body for declined attendance
 
 ```json
 {
-  "guestName": "Ana García",
+  "guestName": "Carlos LÃ³pez",
   "contact": "600123123",
   "attendanceConfirmed": false,
   "attendeeCount": 0,
   "intolerances": "",
-  "additionalComment": "Sentimos no poder acompañaros"
+  "additionalComment": "Sentimos no poder acompaÃ±aros"
 }
 ```
 
 ---
 
-## 6.2. Request fields
+### 5.3. Request fields
 
 | Field | Type | Required | Validation |
 |---|---|---:|---|
-| `guestName` | String | Yes | 2–200 characters |
-| `contact` | String | Yes | 3–200 characters |
-| `attendanceConfirmed` | Boolean | Yes | `true` or `false` |
-| `attendeeCount` | Integer | Yes | Between 0 and 20 at DTO level |
+| `guestName` | String | Yes | Between 2 and 200 characters |
+| `contact` | String | Yes | Between 3 and 200 characters |
+| `attendanceConfirmed` | Boolean | Yes | Must be `true` or `false` |
+| `attendeeCount` | Integer | Yes | Between 0 and 20 |
 | `intolerances` | String | No | Maximum 500 characters |
 | `additionalComment` | String | No | Maximum 1000 characters |
 
-The `contact` field deliberately does not enforce only one contact format.
+The `contact` field deliberately accepts different contact formats.
 
 Valid examples include:
 
@@ -366,79 +196,81 @@ Valid examples include:
 persona@example.com
 ```
 
+The backend trims surrounding whitespace from the required text values.
+
+Blank optional text is stored as `null` after normalization.
+
 ---
 
-## 6.3. Attendance business rules
+### 5.4. Attendance business rules
 
-DTO validation provides the general numerical range.
-
-The service layer applies the invitation-specific business rule.
-
-When:
-
-```json
-{
-  "attendanceConfirmed": true
-}
-```
-
-the rule is:
+When attendance is confirmed:
 
 ```text
-1 <= attendeeCount <= invitation.maxGuests
+1 <= attendeeCount <= 20
 ```
 
-When:
-
-```json
-{
-  "attendanceConfirmed": false
-}
-```
-
-the required value is:
+When attendance is declined:
 
 ```text
 attendeeCount = 0
 ```
 
-Therefore, even if the general DTO allows values up to 20, a guest cannot exceed the `maxGuests` configured for their invitation.
+These rules are enforced by the service layer in addition to Jakarta Bean Validation.
 
-Example:
-
-```text
-Invitation maxGuests = 4
-```
-
-Valid:
+The general maximum is 20 because the automatically created invitation uses:
 
 ```text
-1
-2
-3
-4
+maxGuests = 20
 ```
 
-Invalid:
-
-```text
-0
-5
-6
-...
-20
-```
-
-when attendance has been confirmed.
+This preserves the existing domain model and database constraints without requiring a schema migration.
 
 ---
 
-## 6.4. Successful response
+### 5.5. Transactional processing
+
+For every valid request, the backend performs one transaction:
+
+```text
+POST /api/public/registrations
+        |
+        v
+Validate SaveRsvpRequest
+        |
+        v
+Generate unique random AccessCode
+        |
+        +--> Create Invitation
+        |
+        `--> Create associated RsvpResponse
+                    |
+                    v
+                 Commit
+```
+
+The generated `Invitation` uses:
+
+```text
+accessCode = randomly generated internal value
+displayName = guestName
+maxGuests = 20
+isActive = true
+expiresAt = null
+```
+
+If either persistence operation fails, the transaction is rolled back.
+
+Consequently, a failed response creation does not leave an orphan `Invitation` in the database.
+
+---
+
+### 5.6. Successful response
 
 HTTP:
 
 ```text
-200 OK
+201 Created
 ```
 
 Example:
@@ -451,11 +283,38 @@ Example:
 }
 ```
 
-The same response structure is used whether the operation creates the first RSVP or updates the existing RSVP.
+### Response fields
+
+| Field | Type | Description |
+|---|---|---|
+| `success` | Boolean | Indicates that the registration was stored |
+| `message` | String | Confirmation message shown to the guest |
+| `updatedAt` | Date/time | Timestamp of the stored response |
+
+The response deliberately does not expose:
+
+```text
+Invitation database ID
+RsvpResponse database ID
+Generated AccessCode
+Administrator information
+```
 
 ---
 
-# 7. Validation errors
+### 5.7. Independent registrations
+
+Each successful `POST` creates a new `Invitation` and a new associated `RsvpResponse`.
+
+The endpoint does not attempt to identify a returning guest or update an earlier general registration.
+
+Two people can have the same name, so the API does not reject registrations using only `guestName` as a duplicate key.
+
+Guest accounts, email verification, SMS verification, and advanced duplicate detection are outside the current scope.
+
+---
+
+## 6. Validation errors
 
 Jakarta Bean Validation checks the request before the business operation is executed.
 
@@ -483,13 +342,28 @@ Example:
 }
 ```
 
-The `fields` object only contains fields that failed validation.
+The `fields` object contains only fields that failed validation.
+
+Possible validation messages include:
+
+| Field | Validation message |
+|---|---|
+| `guestName` | `El nombre del invitado es obligatorio.` |
+| `guestName` | `El nombre debe tener entre 2 y 200 caracteres.` |
+| `contact` | `El contacto es obligatorio.` |
+| `contact` | `El contacto debe tener entre 3 y 200 caracteres.` |
+| `attendanceConfirmed` | `Debes confirmar si asistirÃ¡s.` |
+| `attendeeCount` | `El nÃºmero de asistentes es obligatorio.` |
+| `attendeeCount` | `El nÃºmero de asistentes no puede ser negativo.` |
+| `attendeeCount` | `El nÃºmero de asistentes no puede superar 20.` |
+| `intolerances` | `Las intolerancias no pueden superar 500 caracteres.` |
+| `additionalComment` | `El comentario no puede superar 1.000 caracteres.` |
 
 ---
 
-## 7.1. Invalid attendee count
+### 6.1. Invalid attendee count
 
-Business validation may also reject the attendee count.
+The service layer can also reject a combination that passes the basic field range but violates an attendance business rule.
 
 HTTP:
 
@@ -504,7 +378,7 @@ Example:
   "success": false,
   "error": {
     "code": "INVALID_GUEST_COUNT",
-    "message": "El número de asistentes supera el máximo permitido."
+    "message": "Debe asistir al menos una persona."
   }
 }
 ```
@@ -512,13 +386,13 @@ Example:
 Another possible message is:
 
 ```text
-Debe asistir al menos una persona.
+Cuando no se confirma asistencia, el nÃºmero de asistentes debe ser cero.
 ```
 
-or:
+For the compatibility endpoint, another possible message is:
 
 ```text
-Cuando no se confirma asistencia, el número de asistentes debe ser cero.
+El nÃºmero de asistentes supera el mÃ¡ximo permitido.
 ```
 
 The error code remains:
@@ -529,9 +403,271 @@ INVALID_GUEST_COUNT
 
 ---
 
+# Access-code compatibility API
+
+## 7. Compatibility overview
+
+The following endpoints belong to the earlier individual-invitation workflow:
+
+```http
+GET /api/public/invitations/{code}
+PUT /api/public/invitations/{code}/response
+```
+
+They remain available to preserve compatibility with the existing architecture.
+
+They are not used by the main public form at `/` and a guest using the general URL does not need to know an access code.
+
+---
+
+## 8. Retrieve a compatibility invitation
+
+Retrieves the public information associated with one known invitation access code.
+
+### Request
+
+```http
+GET /api/public/invitations/{code}
+```
+
+Example:
+
+```http
+GET /api/public/invitations/DEMO-FAMILY-001
+```
+
+### Authentication
+
+Not required.
+
+### Path parameter
+
+| Parameter | Type | Description |
+|---|---|---|
+| `code` | String | Existing invitation access code |
+
+The code is trimmed before it is used.
+
+An empty or invalid code is treated as an invitation that cannot be found.
+
+---
+
+### 8.1. Successful response without an existing RSVP
+
+HTTP:
+
+```text
+200 OK
+```
+
+Example:
+
+```json
+{
+  "displayName": "Familia GarcÃ­a",
+  "maxGuests": 4,
+  "expiresAt": "2027-05-01T22:00:00",
+  "existingResponse": null
+}
+```
+
+### Response fields
+
+| Field | Type | Description |
+|---|---|---|
+| `displayName` | String | Name associated with the invitation |
+| `maxGuests` | Integer | Maximum number of attendees allowed |
+| `expiresAt` | Date/time or null | Optional invitation expiration |
+| `existingResponse` | Object or null | Previously stored RSVP |
+
+The response does not expose the internal invitation database ID or the complete invitation list.
+
+---
+
+### 8.2. Successful response with an existing RSVP
+
+```json
+{
+  "displayName": "Familia GarcÃ­a",
+  "maxGuests": 4,
+  "expiresAt": "2027-05-01T22:00:00",
+  "existingResponse": {
+    "guestName": "Ana GarcÃ­a",
+    "contact": "ana@example.com",
+    "attendanceConfirmed": true,
+    "attendeeCount": 3,
+    "intolerances": "Una persona es intolerante a la lactosa",
+    "additionalComment": "Llegaremos el viernes"
+  }
+}
+```
+
+### Existing RSVP fields
+
+| Field | Type | Description |
+|---|---|---|
+| `guestName` | String | Guest name entered in the form |
+| `contact` | String | Phone number, email address, or other contact text |
+| `attendanceConfirmed` | Boolean | Whether attendance is confirmed |
+| `attendeeCount` | Integer | Number of attendees |
+| `intolerances` | String or null | Food intolerance information |
+| `additionalComment` | String or null | Optional additional comment |
+
+---
+
+### 8.3. Invitation not found
+
+If no invitation exists for the supplied code:
+
+HTTP:
+
+```text
+404 Not Found
+```
+
+Response:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVITATION_NOT_FOUND",
+    "message": "No se ha encontrado una invitaciÃ³n vÃ¡lida para el cÃ³digo indicado."
+  }
+}
+```
+
+---
+
+### 8.4. Disabled invitation
+
+If the invitation exists but is disabled:
+
+HTTP:
+
+```text
+410 Gone
+```
+
+Response:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVITATION_DISABLED",
+    "message": "La invitaciÃ³n estÃ¡ desactivada."
+  }
+}
+```
+
+---
+
+### 8.5. Expired invitation
+
+If the invitation expiration date has already passed:
+
+HTTP:
+
+```text
+410 Gone
+```
+
+Response:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVITATION_EXPIRED",
+    "message": "El plazo para responder a la invitaciÃ³n ha finalizado."
+  }
+}
+```
+
+---
+
+## 9. Create or update a compatibility RSVP
+
+Stores the RSVP associated with an existing invitation code.
+
+If no RSVP exists, a new response is created.
+
+If an RSVP already exists for the same invitation, that response is updated.
+
+### Request
+
+```http
+PUT /api/public/invitations/{code}/response
+Content-Type: application/json
+```
+
+Example:
+
+```http
+PUT /api/public/invitations/DEMO-FAMILY-001/response
+```
+
+### Authentication
+
+Not required.
+
+### Request body
+
+The request uses the same fields and Bean Validation rules as `POST /api/public/registrations`.
+
+Example:
+
+```json
+{
+  "guestName": "Ana GarcÃ­a",
+  "contact": "ana@example.com",
+  "attendanceConfirmed": true,
+  "attendeeCount": 3,
+  "intolerances": "Lactosa",
+  "additionalComment": "Llegaremos el viernes"
+}
+```
+
+### Invitation-specific attendance rule
+
+For confirmed attendance:
+
+```text
+1 <= attendeeCount <= invitation.maxGuests
+```
+
+For declined attendance:
+
+```text
+attendeeCount = 0
+```
+
+### Successful response
+
+HTTP:
+
+```text
+200 OK
+```
+
+Example:
+
+```json
+{
+  "success": true,
+  "message": "Tu respuesta se ha guardado correctamente.",
+  "updatedAt": "2027-03-15T17:30:00"
+}
+```
+
+The same response structure is used whether the operation creates the first RSVP or updates the existing RSVP.
+
+---
+
 # Administration API
 
-## 8. Authentication model
+## 10. Authentication model
 
 Administration endpoints are located under:
 
@@ -547,9 +683,9 @@ The user must have an authenticated HTTP session with:
 ROLE_ADMIN
 ```
 
-Admitionum currently uses Spring Security form login.
+Admitionum uses Spring Security form login.
 
-The API does not use:
+The administration API does not use:
 
 ```text
 JWT
@@ -558,17 +694,15 @@ API keys
 OAuth tokens
 ```
 
-for administrator access.
+When an unauthenticated browser requests a protected resource, Spring Security can redirect it to the login page.
 
-When an unauthenticated browser tries to access a protected resource, Spring Security's form-login flow can redirect the client to the login page.
-
-For that reason, the administration API is designed primarily to be consumed by the administration frontend running in the same Spring Boot application and authenticated session.
+The administration API is primarily consumed by the administration frontend running in the same Spring Boot application and authenticated session.
 
 ---
 
-# 9. Dashboard
+## 11. Dashboard
 
-Returns aggregate RSVP statistics.
+Returns aggregate invitation and RSVP statistics.
 
 ### Request
 
@@ -624,9 +758,11 @@ Example:
 | `confirmedAttendees` | Sum of attendee counts for confirmed RSVPs |
 | `responsesWithIntolerances` | Confirmed responses containing intolerance information |
 
+Registrations created through `POST /api/public/registrations` are included automatically because they use the existing `Invitation` and `RsvpResponse` entities and repositories.
+
 ---
 
-# 10. List invitations and responses
+## 12. List invitations and responses
 
 Returns the administrative view of all invitations.
 
@@ -658,7 +794,7 @@ Search and status filtering are performed by the administration JavaScript after
 
 ---
 
-## 10.1. Successful response
+### 12.1. Successful response
 
 HTTP:
 
@@ -672,10 +808,10 @@ Example:
 [
   {
     "invitationId": 1,
-    "displayName": "Familia García",
-    "maxGuests": 4,
+    "displayName": "Ana GarcÃ­a",
+    "maxGuests": 20,
     "status": "CONFIRMED",
-    "guestName": "Ana García",
+    "guestName": "Ana GarcÃ­a",
     "contact": "ana@example.com",
     "attendeeCount": 3,
     "intolerances": "Lactosa",
@@ -684,8 +820,8 @@ Example:
   },
   {
     "invitationId": 2,
-    "displayName": "María López",
-    "maxGuests": 1,
+    "displayName": "Familia LÃ³pez",
+    "maxGuests": 4,
     "status": "PENDING",
     "guestName": null,
     "contact": null,
@@ -697,9 +833,13 @@ Example:
 ]
 ```
 
+The first item illustrates a registration created automatically through the general public endpoint.
+
+The second item illustrates an unanswered invitation that can still exist through the compatibility model.
+
 ---
 
-## 10.2. Administrative status
+### 12.2. Administrative status
 
 Possible values are:
 
@@ -711,11 +851,9 @@ DISABLED
 EXPIRED
 ```
 
-The status is calculated by the application.
+The status is calculated by the application. It is not stored as a separate RSVP status column.
 
-It is not stored as a separate RSVP status column.
-
-### CONFIRMED
+#### CONFIRMED
 
 An RSVP exists and:
 
@@ -723,7 +861,7 @@ An RSVP exists and:
 attendanceConfirmed = true
 ```
 
-### DECLINED
+#### DECLINED
 
 An RSVP exists and:
 
@@ -731,15 +869,15 @@ An RSVP exists and:
 attendanceConfirmed = false
 ```
 
-### DISABLED
+#### DISABLED
 
 No RSVP exists and the invitation is not active.
 
-### EXPIRED
+#### EXPIRED
 
 No RSVP exists and the expiration date has passed.
 
-### PENDING
+#### PENDING
 
 No RSVP exists, the invitation is active, and it has not expired.
 
@@ -747,7 +885,7 @@ If an RSVP already exists, `CONFIRMED` or `DECLINED` takes precedence over the i
 
 ---
 
-# 11. Export responses as CSV
+## 13. Export responses as CSV
 
 Downloads the administrative invitation data as a CSV document.
 
@@ -787,9 +925,11 @@ The response is sent as an attachment with the filename:
 wedding-responses.csv
 ```
 
+Registrations created through the general public endpoint are included automatically.
+
 ---
 
-## 11.1. CSV columns
+### 13.1. CSV columns
 
 The exported file contains:
 
@@ -814,14 +954,16 @@ Invitacion,NombreInvitado,Contacto,Estado,NumeroAsistentes,Intolerancias,Comenta
 Example row:
 
 ```csv
-"Familia García","Ana García","ana@example.com","CONFIRMED","3","Lactosa","Llegaremos el viernes","2027-03-10T12:00:00","2027-03-15T17:30:00"
+"Ana GarcÃ­a","Ana GarcÃ­a","ana@example.com","CONFIRMED","3","Lactosa","Llegaremos el viernes","2027-03-10T12:00:00","2027-03-15T17:30:00"
 ```
 
 The exact quoting of a value depends on its contents and CSV escaping requirements.
 
+Values beginning with spreadsheet formula characters are neutralized before export to reduce CSV formula injection risk.
+
 ---
 
-# 12. API error format
+## 14. API error format
 
 Public application errors follow this structure:
 
@@ -864,50 +1006,67 @@ The `fields` property is omitted when there are no field-specific validation err
 
 ---
 
-# 13. Documented application error codes
+## 15. Documented application error codes
 
 The application currently defines the following public error codes:
 
 | Error code | HTTP status | Meaning |
 |---|---:|---|
-| `INVITATION_NOT_FOUND` | 404 | No invitation matches the supplied code |
-| `INVITATION_DISABLED` | 410 | The invitation has been disabled |
-| `INVITATION_EXPIRED` | 410 | The invitation response period has expired |
+| `INVITATION_NOT_FOUND` | 404 | No compatibility invitation matches the supplied code |
+| `INVITATION_DISABLED` | 410 | The compatibility invitation has been disabled |
+| `INVITATION_EXPIRED` | 410 | The compatibility invitation response period has expired |
 | `INVALID_GUEST_COUNT` | 400 | Attendance count violates a business rule |
 | `VALIDATION_ERROR` | 400 | Request fields failed Jakarta Bean Validation |
 
-Unexpected framework or infrastructure failures are not part of the normal public API contract documented here.
+Unexpected framework, transaction, or infrastructure failures are not part of the normal public API contract documented here.
 
 ---
 
-# 14. Public API data boundary
+## 16. Public API data boundary
 
-The public API deliberately exposes only the information needed to complete one invitation.
+The main public endpoint accepts one new registration and returns only its confirmation result.
 
-It does not provide endpoints such as:
+It does not expose the generated access code or any internal database identifier.
+
+The compatibility endpoints expose information for only one known invitation code.
+
+The public API does not provide endpoints such as:
 
 ```text
 GET /api/public/invitations
 GET /api/public/responses
+GET /api/public/registrations
 ```
 
-A public client cannot request the complete invitation database through the documented API.
+A public client therefore cannot request the complete invitation or RSVP database through the documented API.
 
-The intended public flow is always:
+The main public flow is:
 
 ```text
-Invitation access code
-        |
-        v
+Shared URL or QR
+       |
+       v
+POST /api/public/registrations
+       |
+       v
+One new Invitation and RsvpResponse
+```
+
+The compatibility flow is:
+
+```text
+Known access code
+       |
+       v
 One invitation
-        |
-        v
-One RSVP
+       |
+       v
+Zero or one RSVP
 ```
 
 ---
 
-# 15. Administration API data boundary
+## 17. Administration API data boundary
 
 Complete invitation information is only available through:
 
@@ -917,7 +1076,7 @@ Complete invitation information is only available through:
 
 These endpoints require Spring Security authentication.
 
-The separation is therefore:
+The separation is:
 
 ```text
 Guest
@@ -926,7 +1085,7 @@ Guest
 /api/public/**
   |
   v
-Individual invitation
+Submit one registration or use one known compatibility code
 ```
 
 and:
@@ -946,7 +1105,7 @@ Complete RSVP administration data
 
 ---
 
-# 16. Date and time representation
+## 18. Date and time representation
 
 Internal application timestamps are generated using UTC.
 
@@ -964,31 +1123,22 @@ Within Admitionum, these internal values are treated as UTC even though the seri
 
 ---
 
-# 17. Example public flow
+## 19. Example main public flow
 
-A complete RSVP interaction can be summarized as follows.
+The complete general RSVP interaction requires one API request.
 
-### Step 1 — Retrieve invitation
-
-```http
-GET /api/public/invitations/DEMO-FAMILY-001
-```
-
-Response:
-
-```json
-{
-  "displayName": "Familia García",
-  "maxGuests": 4,
-  "expiresAt": null,
-  "existingResponse": null
-}
-```
-
-### Step 2 — Submit RSVP
+### Step 1 â€” Open the shared form
 
 ```http
-PUT /api/public/invitations/DEMO-FAMILY-001/response
+GET /
+```
+
+The page is public and does not require a query parameter such as `?code=...`.
+
+### Step 2 â€” Submit the RSVP
+
+```http
+POST /api/public/registrations
 Content-Type: application/json
 ```
 
@@ -996,7 +1146,7 @@ Body:
 
 ```json
 {
-  "guestName": "Ana García",
+  "guestName": "Ana GarcÃ­a",
   "contact": "ana@example.com",
   "attendanceConfirmed": true,
   "attendeeCount": 3,
@@ -1007,6 +1157,10 @@ Body:
 
 Response:
 
+```text
+201 Created
+```
+
 ```json
 {
   "success": true,
@@ -1015,43 +1169,56 @@ Response:
 }
 ```
 
-### Step 3 — Retrieve the invitation again
+The backend has now committed one new `Invitation` and its associated `RsvpResponse`.
+
+### Step 3 â€” Administrative visibility
+
+After authenticating as an administrator, the new record is available through:
+
+```http
+GET /api/admin/responses
+```
+
+It is also included in:
+
+```http
+GET /api/admin/dashboard
+GET /api/admin/responses.csv
+```
+
+---
+
+## 20. Example compatibility flow
+
+The earlier access-code interaction remains available but is no longer the main guest journey.
+
+### Step 1 â€” Retrieve the invitation
 
 ```http
 GET /api/public/invitations/DEMO-FAMILY-001
 ```
 
-Response now contains:
+### Step 2 â€” Create or update its RSVP
 
-```json
-{
-  "displayName": "Familia García",
-  "maxGuests": 4,
-  "expiresAt": null,
-  "existingResponse": {
-    "guestName": "Ana García",
-    "contact": "ana@example.com",
-    "attendanceConfirmed": true,
-    "attendeeCount": 3,
-    "intolerances": null,
-    "additionalComment": null
-  }
-}
+```http
+PUT /api/public/invitations/DEMO-FAMILY-001/response
+Content-Type: application/json
 ```
 
-The database still contains only one RSVP associated with that invitation.
+Repeated successful `PUT` requests for the same invitation update its single associated RSVP.
 
 ---
 
-# 18. Endpoint summary
+## 21. Endpoint summary
 
 | Method | Endpoint | Authentication | Purpose |
 |---|---|---|---|
 | `GET` | `/api/public/health` | Public | Application health |
-| `GET` | `/api/public/invitations/{code}` | Public | Retrieve one invitation |
-| `PUT` | `/api/public/invitations/{code}/response` | Public | Create or update RSVP |
+| `POST` | `/api/public/registrations` | Public | Create a new Invitation and RSVP |
+| `GET` | `/api/public/invitations/{code}` | Public, compatibility | Retrieve one existing invitation |
+| `PUT` | `/api/public/invitations/{code}/response` | Public, compatibility | Create or update one existing invitation's RSVP |
 | `GET` | `/api/admin/dashboard` | ADMIN | Retrieve summary statistics |
 | `GET` | `/api/admin/responses` | ADMIN | Retrieve administration list |
 | `GET` | `/api/admin/responses.csv` | ADMIN | Export RSVP information |
 
-This is the complete application API currently intended for Admitionum v1.1.
+This is the complete application API currently intended for Admitionum after Phase 20.

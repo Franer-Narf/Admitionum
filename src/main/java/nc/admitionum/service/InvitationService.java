@@ -3,6 +3,8 @@ package nc.admitionum.service;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
+import java.util.UUID;
+
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -22,6 +24,11 @@ import nc.admitionum.repository.RsvpResponseRepository;
 @Service
 @Transactional(readOnly = true)
 public class InvitationService {
+
+    private static final int GENERAL_MAX_GUESTS = 20;
+
+    private static final String
+        REGISTRATION_CODE_PREFIX = "REG-";
 
     private final InvitationRepository invitationRepository;
     private final RsvpResponseRepository rsvpResponseRepository;
@@ -52,6 +59,68 @@ public class InvitationService {
             invitation.getMaxGuests(),
             invitation.getExpiresAt(),
             existingResponse
+        );
+    }
+
+    @Transactional
+    public SaveRsvpResponse registerPublicResponse(
+            SaveRsvpRequest request) {
+
+        String guestName =
+            clean(request.getGuestName());
+
+        String contact =
+            clean(request.getContact());
+
+        Invitation invitation =
+            new Invitation(
+                generateAccessCode(),
+                guestName,
+                GENERAL_MAX_GUESTS,
+                true,
+                null
+            );
+
+        validateAttendance(
+            invitation,
+            request.getAttendanceConfirmed(),
+            request.getAttendeeCount()
+        );
+
+        Invitation storedInvitation =
+            invitationRepository
+                .saveAndFlush(invitation);
+
+        Integer attendeeCount =
+            Boolean.TRUE.equals(
+                request.getAttendanceConfirmed()
+            )
+                ? request.getAttendeeCount()
+                : 0;
+
+        RsvpResponse response =
+            new RsvpResponse(
+                storedInvitation,
+                guestName,
+                contact,
+                request.getAttendanceConfirmed(),
+                attendeeCount,
+                cleanNullable(
+                    request.getIntolerances()
+                ),
+                cleanNullable(
+                    request.getAdditionalComment()
+                )
+            );
+
+        RsvpResponse storedResponse =
+            rsvpResponseRepository
+                .saveAndFlush(response);
+
+        return new SaveRsvpResponse(
+            true,
+            "Tu respuesta se ha guardado correctamente.",
+            storedResponse.getUpdatedAt()
         );
     }
 
@@ -218,6 +287,12 @@ public class InvitationService {
             response.getIntolerances(),
             response.getAdditionalComment()
         );
+    }
+
+    private String generateAccessCode() {
+
+        return REGISTRATION_CODE_PREFIX
+            + UUID.randomUUID();
     }
 
     private String normalizeAccessCode(
