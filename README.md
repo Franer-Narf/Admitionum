@@ -8,9 +8,17 @@ Each public submission atomically creates an internal `Invitation` and its assoc
 
 Administrators have access to a protected dashboard where they can review RSVP information, filter responses, view attendance statistics, and export the data as CSV.
 
-The application is containerized with Docker, deployed to Microsoft Azure, and automatically tested and deployed through GitHub Actions.
+The application is containerized with Docker and its production edition runs on Microsoft Azure. This public portfolio repository uses GitHub Actions for automated testing only; production deployment is managed separately through private infrastructure.
 
 ---
+
+## Repository scope
+
+This public repository is the portfolio and educational edition of Admitionum.
+
+It contains the application source code, automated tests, Docker configuration, and technical documentation. Its GitHub Actions workflow performs continuous integration checks but does not have access to production credentials and does not deploy the live application.
+
+The operational production repository, deployment workflow, container images, configuration, and real data are maintained separately in private infrastructure.
 
 ## Features
 
