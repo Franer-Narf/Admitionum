@@ -1,4 +1,26 @@
-name: CI/CD Admitionum
+name: CI/CD Admitionum Portfolio
+
+# Public portfolio workflow.
+#
+# ACTIVE BEHAVIOUR:
+# - Pull requests and pushes to main run the complete Maven verification.
+# - The public repository does not deploy the live production application.
+# - No production credentials or real infrastructure identifiers are stored here.
+#
+# OPTIONAL DEPLOYMENT TEMPLATE:
+# - The deployment job is intentionally disabled by default.
+# - It exists to document and demonstrate a complete CI/CD implementation.
+# - Production is operated separately through private infrastructure.
+#
+# To activate this template in an independent deployment:
+# 1. Create and configure your own Azure resources.
+# 2. Configure the target Azure Container App to pull from private GHCR.
+# 3. Add the required Azure OIDC secrets and repository variables.
+# 4. Set ENABLE_AZURE_DEPLOYMENT=true.
+# 5. Run the workflow manually with deploy=true.
+#
+# Never connect this public portfolio workflow to the real Admitionum
+# production environment.
 
 on:
   pull_request:
@@ -7,19 +29,28 @@ on:
     paths-ignore:
       - "**/*.md"
       - "traceability*.txt"
+
   push:
     branches:
       - main
     paths-ignore:
       - "**/*.md"
       - "traceability*.txt"
+
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: "Run the optional Azure deployment template"
+        required: true
+        default: false
+        type: boolean
 
 jobs:
   test:
-    name: Test and package
+    name: Test and verify application
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     permissions:
       contents: read
 
@@ -39,10 +70,16 @@ jobs:
       - name: Allow Maven Wrapper execution
         run: chmod +x mvnw
 
-      - name: Run tests and package application
+      - name: Run tests and verify application
         run: ./mvnw --batch-mode --no-transfer-progress clean verify
 
-      - name: Store tested JAR
+      # The tested JAR is uploaded only when an explicitly enabled manual
+      # deployment has been requested. Normal CI runs do not store artifacts.
+      - name: Store tested JAR for optional deployment
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          inputs.deploy == true &&
+          vars.ENABLE_AZURE_DEPLOYMENT == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: admitionum-jar
@@ -50,29 +87,52 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  deploy:
-    name: Build image and deploy to Azure
+  # This job is a deployable portfolio template.
+  #
+  # It remains skipped unless all three conditions are satisfied:
+  # - The workflow was started manually.
+  # - The operator selected deploy=true.
+  # - ENABLE_AZURE_DEPLOYMENT is explicitly configured as true.
+  #
+  # The public portfolio repository intentionally leaves that variable unset.
+  deploy_template:
+    name: Optional Azure deployment template
     if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-    needs: test
+      github.event_name == 'workflow_dispatch' &&
+      inputs.deploy == true &&
+      vars.ENABLE_AZURE_DEPLOYMENT == 'true'
+
+    needs:
+      - test
+
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     concurrency:
-      group: admitionum-production
+      group: admitionum-optional-deployment
       cancel-in-progress: false
+
     permissions:
       contents: read
+
+      # Required only when this optional job is deliberately enabled.
+      packages: write
       id-token: write
+
     env:
-      AZURE_CORE_OUTPUT: none
+      # Generic repository variables.
+      # They must point to infrastructure created by the person activating
+      # this template, never to the real private production environment.
       RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
       CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME }}
-      ACR_NAME: ${{ vars.AZURE_CONTAINER_REGISTRY }}
-      ACR_LOGIN_SERVER: ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}
-      IMAGE_NAME: ${{ vars.IMAGE_NAME }}
-      IMAGE_REFERENCE: ${{ vars.AZURE_CONTAINER_REGISTRY_LOGIN_SERVER }}/${{ vars.IMAGE_NAME }}:${{ github.sha }}
-      REVISION_SUFFIX: gha-${{ github.run_number }}-${{ github.run_attempt }}
+
+      # Optional. When omitted, the image name defaults to
+      # "admitionum-portfolio".
+      GHCR_IMAGE_NAME: ${{ vars.GHCR_IMAGE_NAME }}
+
+      # The prefix distinguishes portfolio deployments from private
+      # production revisions. github.run_id prevents suffix collisions.
+      REVISION_SUFFIX: portfolio-${{ github.run_id }}-${{ github.run_attempt }}
 
     steps:
       - name: Check out repository
@@ -86,9 +146,38 @@ jobs:
           name: admitionum-jar
           path: target
 
+      # GHCR requires lowercase image paths.
+      # Using the repository owner dynamically makes the template reusable
+      # from an independent fork or repository.
+      - name: Define GHCR image reference
+        shell: bash
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          image_name="$(printf '%s' "${GHCR_IMAGE_NAME:-admitionum-portfolio}" | tr '[:upper:]' '[:lower:]')"
+          image_reference="ghcr.io/${owner}/${image_name}:${GITHUB_SHA}"
+
+          echo "IMAGE_REFERENCE=${image_reference}" >> "$GITHUB_ENV"
+          echo "Optional deployment image: ${image_reference}"
+
       - name: Build Docker image
         run: docker build --pull --tag "$IMAGE_REFERENCE" .
 
+      # GITHUB_TOKEN publishes the package associated with the repository.
+      # No PAT is stored in this workflow.
+      - name: Log in to GitHub Container Registry
+        shell: bash
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" |
+            docker login ghcr.io \
+              --username "${{ github.actor }}" \
+              --password-stdin
+
+      - name: Push image to GitHub Container Registry
+        run: docker push "$IMAGE_REFERENCE"
+
+      # Azure authentication uses short-lived OIDC federation.
+      # Anyone activating this template must create their own federated
+      # credential and configure these three repository secrets.
       - name: Log in to Azure with OIDC
         uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
         with:
@@ -99,12 +188,9 @@ jobs:
       - name: Install Azure Container Apps extension
         run: az extension add --name containerapp --upgrade --yes
 
-      - name: Log in to Azure Container Registry
-        run: az acr login --name "$ACR_NAME"
-
-      - name: Push Docker image
-        run: docker push "$IMAGE_REFERENCE"
-
+      # Before enabling this job, the target Container App must already be
+      # configured with credentials that allow it to pull the private image
+      # from GHCR. Those pull credentials must not be committed here.
       - name: Update Azure Container App
         run: >-
           az containerapp update
@@ -125,6 +211,8 @@ jobs:
 
           if [[ "$deployed_image" != "$IMAGE_REFERENCE" ]]; then
             echo "::error::The deployed image does not match the image built by this workflow."
+            echo "Expected: $IMAGE_REFERENCE"
+            echo "Actual:   $deployed_image"
             exit 1
           fi
 
@@ -140,12 +228,16 @@ jobs:
           health_url="https://${fqdn}/api/public/health"
 
           for attempt in {1..20}; do
-            response="$(curl --silent --show-error --max-time 30 "$health_url" || true)"
+            response="$(curl \
+              --silent \
+              --show-error \
+              --max-time 30 \
+              "$health_url" || true)"
 
             if jq -e \
               '.status == "ok" and .application == "Admitionum"' \
               >/dev/null 2>&1 <<<"$response"; then
-              echo "Admitionum is healthy at $health_url"
+              echo "Admitionum is healthy at ${health_url}"
               exit 0
             fi
 
@@ -154,13 +246,18 @@ jobs:
           done
 
           echo "::error::Admitionum did not pass the health check."
+
           az containerapp revision list \
             --name "$CONTAINER_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
             --query '[].{Revision:name,Active:properties.active,Health:properties.healthState,State:properties.runningState}' \
             --output table
+
           exit 1
 
-      - name: Log out from Azure
+      - name: Log out
         if: always()
-        run: az logout || true
+        shell: bash
+        run: |
+          docker logout ghcr.io || true
+          az logout || true

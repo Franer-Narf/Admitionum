@@ -8,7 +8,7 @@ Each public submission atomically creates an internal `Invitation` and its assoc
 
 Administrators have access to a protected dashboard where they can review RSVP information, filter responses, view attendance statistics, and export the data as CSV.
 
-The application is containerized with Docker and its production edition runs on Microsoft Azure. This public portfolio repository uses GitHub Actions for automated testing only; production deployment is managed separately through private infrastructure.
+This public portfolio repository runs automated continuous integration checks and includes an opt-in deployment template that is disabled by default. It has no access to the live production environment. Production deployment, container images, configuration, and real data are maintained separately through private infrastructure.
 
 ---
 
